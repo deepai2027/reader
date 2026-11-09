@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build-vet-test:
+    runs-on: ubuntu-latest
+    # No service containers: Phase 0-3 run entirely against stub/local
+    # adapters with zero external infrastructure (see specs/roadmap.md
+    # and specs/2026-11-09-scaffolding-core-architecture/validation.md).
+    # Real PostgreSQL/RabbitMQ/MinIO service containers are introduced
+    # only alongside the Final Phase's integration tests.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Build
+        run: make build
+
+      - name: Vet
+        run: make vet
+
+      - name: Test
+        run: make test
