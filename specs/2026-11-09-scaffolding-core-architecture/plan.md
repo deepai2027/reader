@@ -4,16 +4,41 @@ Task groups are ordered strictly by dependency: each group only depends
 on groups above it, never below. Keep groups small — if a group starts
 accumulating unrelated changes, split it.
 
+## Implementation Status (2026-11-09)
+
+Groups 1–7 have been implemented, each as its own commit on
+`feature/2026-11-09-scaffolding-core-architecture`. Group 8 (exit
+verification) is **partially blocked**: this sandbox has no Go
+toolchain and no network access to install one, so `go build`,
+`go vet`, and `go test` could not actually be run here. All code was
+written and manually reviewed (import usage, brace/paren balance,
+interface-signature consistency across packages) but has **not been
+compiler-verified**. Run `make build vet test` locally (or point me at
+an environment with Go, e.g. Claude Code) before treating Group 8 as
+complete — see `validation.md` for the exact commands and what to
+check.
+
+| Group | Status |
+|---|---|
+| 1. Repository & Module Scaffolding | Implemented |
+| 2. Core Domain Types | Implemented |
+| 3. Core Port Interfaces | Implemented |
+| 4. Minimal Stub Adapters | Implemented |
+| 5. Configuration Loading | Implemented |
+| 6. Structured Logging Setup | Implemented |
+| 7. Continuous Integration Pipeline | Implemented (workflow file only — not yet run on a real CI provider) |
+| 8. Phase Exit Verification | **Blocked on local `make build vet test` — not run** |
+
 ---
 
-## 1. Repository & Module Scaffolding
+## 1. Repository & Module Scaffolding ✅ implemented
 
 **Depends on:** nothing.
 
-- [ ] `git init` already done on `feature/2026-11-09-scaffolding-core-architecture`.
-- [ ] `go mod init` with the module's real import path (confirm the path
+- [x] `git init` already done on `feature/2026-11-09-scaffolding-core-architecture`.
+- [x] `go mod init` with the module's real import path (confirm the path
       with the team before committing — placeholder until confirmed).
-- [ ] Create directory layout per `specs/tech-stack.md`:
+- [x] Create directory layout per `specs/tech-stack.md`:
       `cmd/reader/`, `internal/agent/`, `internal/config/`,
       `internal/logrotation/`, `internal/minio/`, `internal/processing/`,
       `internal/rabbitmq/`, `internal/regexselect/`, `internal/statusapi/`,
@@ -32,7 +57,7 @@ logs "reader starting" and exits.
 
 ---
 
-## 2. Core Domain Types
+## 2. Core Domain Types ✅ implemented
 
 **Depends on:** 1.
 
@@ -66,7 +91,7 @@ dependency on `internal/ports` or anything infra-related.
 
 ---
 
-## 3. Core Port Interfaces
+## 3. Core Port Interfaces ✅ implemented
 
 **Depends on:** 2.
 
@@ -95,7 +120,7 @@ methods "just in case").
 
 ---
 
-## 4. Minimal Stub Adapters
+## 4. Minimal Stub Adapters ✅ implemented
 
 **Depends on:** 3.
 
@@ -121,7 +146,7 @@ them together, and run without error against zero external services.
 
 ---
 
-## 5. Configuration Loading (Core-Only Parameters)
+## 5. Configuration Loading (Core-Only Parameters) ✅ implemented
 
 **Depends on:** 1 (independent of 2–4, but ordered after repo setup).
 
@@ -145,7 +170,7 @@ developer-machine env state).
 
 ---
 
-## 6. Structured Logging Setup
+## 6. Structured Logging Setup ✅ implemented
 
 **Depends on:** 5 (log level comes from config).
 
@@ -164,7 +189,7 @@ line and exits cleanly.
 
 ---
 
-## 7. Continuous Integration Pipeline
+## 7. Continuous Integration Pipeline ✅ implemented (unverified on real CI)
 
 **Depends on:** 1–6 (needs something real to build/vet/test).
 
@@ -180,7 +205,7 @@ infrastructure dependencies in the workflow file.
 
 ---
 
-## 8. Phase Exit Verification
+## 8. Phase Exit Verification ⚠️ blocked — see status note above
 
 **Depends on:** 1–7.
 
