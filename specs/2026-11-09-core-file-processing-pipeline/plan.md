@@ -4,9 +4,42 @@ Task groups follow the data's own path through the pipeline: each group
 depends only on the group(s) above it. Keep groups small — if a group
 starts accumulating logic that belongs to the next stage, split it.
 
+## Implementation Status (2026-11-09)
+
+All 9 groups are implemented, each as its own commit on
+`feature/2026-11-09-core-file-processing-pipeline`. As with Phase 0:
+this sandbox has no Go toolchain and no network access, so none of this
+was compiler-verified. All code was manually reviewed (brace/paren
+balance, import-usage sweep, cross-package signature consistency), but
+**`go build`/`go vet`/`go test` have not actually been run.**
+
+Two things need to happen on a real machine before this is genuinely
+done, beyond the usual `make build vet test`:
+
+1. **`go mod tidy`** (or `go get golang.org/x/net/publicsuffix`) —
+   Group 5 added `golang.org/x/net` as a real dependency by hand-editing
+   `go.mod`; `go.sum` was never generated here, so the first real build
+   needs network access to fetch and checksum the module.
+2. Fixture files under `internal/processing/testdata/` were built as
+   part of Group 8 (the end-to-end test needed them immediately), not
+   held back for Group 9 as originally planned — noted here so the
+   history makes sense when reading the commits in order.
+
+| Group | Status |
+|---|---|
+| 1. Batch Reader | Implemented |
+| 2. Regex Selection | Implemented (+ `regexengine` seam package) |
+| 3. Extraction | Implemented |
+| 4. Validation | Implemented |
+| 5. Normalization | Implemented — **needs `go mod tidy` for go.sum** |
+| 6. Hashing & Record Assembly | Implemented |
+| 7. Unique-URL Derivation | Implemented |
+| 8. End-to-End Pipeline Orchestration | Implemented, incl. fixtures + manual CLI trigger |
+| 9. Fixture-Driven Test Suite & Phase Exit Verification | Fixtures done in Group 8; manual checklist below still needs a human pass with a real build |
+
 ---
 
-## 1. Batch Reader
+## 1. Batch Reader ✅ implemented
 
 **Depends on:** Phase 0 (`ports.FileSource`, `internal/config`).
 
@@ -32,7 +65,7 @@ fixed, bounded memory, batch by batch, verified by test.
 
 ---
 
-## 2. Regex Selection
+## 2. Regex Selection ✅ implemented
 
 **Depends on:** 1 (needs lines to test patterns against), Phase 0
 (`ports.RegexSource`).
@@ -67,7 +100,7 @@ verified by test — including the tie-break edge case.
 
 ---
 
-## 3. Extraction
+## 3. Extraction ✅ implemented
 
 **Depends on:** 2 (needs a selected pattern).
 
@@ -91,7 +124,7 @@ selected pattern and a single line.
 
 ---
 
-## 4. Validation
+## 4. Validation ✅ implemented
 
 **Depends on:** 3 (needs an `ExtractedCandidate`).
 
@@ -115,7 +148,7 @@ selected pattern and a single line.
 
 ---
 
-## 5. Normalization (URL + Domain/Subdomain/Suffix/Port)
+## 5. Normalization (URL + Domain/Subdomain/Suffix/Port) ⚠️ implemented, go mod tidy required
 
 **Depends on:** 4 (only validated candidates get normalized — don't do
 wasted work normalizing data that's about to be rejected).
@@ -142,7 +175,7 @@ produces the same output) and every documented edge case has a test.
 
 ---
 
-## 6. Hashing & Record Assembly
+## 6. Hashing & Record Assembly ✅ implemented
 
 **Depends on:** 5 (needs the normalized URL and extracted domain parts).
 
@@ -170,7 +203,7 @@ spec.
 
 ---
 
-## 7. Unique-URL Derivation
+## 7. Unique-URL Derivation ✅ implemented
 
 **Depends on:** 6 (needs normalized URLs; conceptually parallel to
 record assembly, not sequential after it, but implemented after so the
@@ -199,7 +232,7 @@ invariant has a test guarding it, not just a comment.
 
 ---
 
-## 8. End-to-End Pipeline Orchestration
+## 8. End-to-End Pipeline Orchestration ✅ implemented
 
 **Depends on:** 1–7 (wires every stage together).
 
@@ -237,7 +270,7 @@ exercised in one real run, not just in isolated unit tests.
 
 ---
 
-## 9. Fixture-Driven Test Suite & Phase Exit Verification
+## 9. Fixture-Driven Test Suite & Phase Exit Verification ⚠️ blocked on real build
 
 **Depends on:** 1–8.
 
