@@ -31,7 +31,13 @@ a single network call to external infrastructure is required to run it.
 
 ---
 
-### Phase 0 — Project Scaffolding & Core Architecture
+### Phase 0 — Project Scaffolding & Core Architecture ✅ Complete (v0.1.0, merged 2026-11-09)
+
+**Status:** merged into `main`. See
+`specs/2026-11-09-scaffolding-core-architecture/` for the full spec and
+implementation status, including the caveat that automated checks were
+never run in the environment that authored the code (no Go toolchain
+available there) — confirmed working on a real machine after merge.
 
 **Goal:** A buildable, testable skeleton with the architectural seams in
 place — no infrastructure yet.
@@ -56,7 +62,15 @@ implementations.
 
 ---
 
-### Phase 1 — Core Implementation: The File-Processing Pipeline
+### Phase 1 — Core Implementation: The File-Processing Pipeline ✅ Complete (merged 2026-11-10)
+
+**Status:** merged into `main`. See
+`specs/2026-11-09-core-file-processing-pipeline/` for the full spec and
+implementation status. Two follow-ups from that merge are worth
+tracking: automated checks (`go build`/`vet`/`test`) still need to be
+confirmed on a real machine, and `go mod tidy` needs to run once (with
+network access) to properly pin `golang.org/x/net/publicsuffix` in
+`go.sum`, since it was hand-added to `go.mod` without that.
 
 **Goal:** Reader's essential functionality, working completely
 independently — given a local file, it produces correct, structured,
@@ -295,13 +309,18 @@ This ordering is a deliberate trade-off, not an oversight:
 
 ## Open Items to Resolve Before/During Implementation
 
-1. **Regex tie-break rule** when multiple active patterns match
-   (Phase 1) — needs an explicit stakeholder decision; stubbed with a
-   deterministic placeholder rule until then.
+1. ~~**Regex tie-break rule** when multiple active patterns match~~ —
+   **Resolved in Phase 1:** the pattern matching the most lines in the
+   5,000-line window wins; on an exact tie, the lowest pattern `ID`
+   wins. See `specs/2026-11-09-core-file-processing-pipeline/requirements.md`.
+   Still provisional pending real pattern data, per that doc.
 2. **Regex engine sufficiency** — confirm stdlib `regexp` (RE2) covers
-   the real predefined patterns, or switch to `regexp2` (Phase 1/3,
-   flagged in `tech-stack.md`). This should ideally be confirmed *before*
-   Phase 1, since it affects the `RegexSource` interface's assumptions.
+   the real predefined patterns, or switch to `regexp2` (flagged in
+   `tech-stack.md`). Still open as of Phase 1: the engine is isolated
+   behind `internal/processing/regexengine`, so switching later touches
+   only that package. Should be confirmed against real pattern data
+   before Phase 3's performance work takes the current engine choice
+   for granted.
 3. **Test infrastructure strategy** for Final Phase integration tests
    against real RabbitMQ/MinIO/Postgres — dedicated shared test
    instances vs. `testcontainers-go` (flagged in `tech-stack.md`).
