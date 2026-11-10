@@ -1,0 +1,3 @@
+https://dup.example.com:alice:password123
+https://dup.example.com:bob:password456
+https://unique.example.com:carol:password789

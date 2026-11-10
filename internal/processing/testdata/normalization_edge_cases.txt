@@ -1,0 +1,4 @@
+example.com:userA:passwordAA
+http://EXAMPLE.ORG:80:userB:passwordBB
+http://192.168.1.10:userC:passwordCC
+https://www.example.co.uk:userD:passwordDD

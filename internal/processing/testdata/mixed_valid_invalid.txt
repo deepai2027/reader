@@ -1,0 +1,4 @@
+https://example.com:alice:password123
+this line has spaces and does not match at all
+https://example.com:a:short
+http://sub.example.co.uk:dave:longenoughpassword
