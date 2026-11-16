@@ -1,0 +1,27 @@
+# Per specs/tech-stack.md's explicit infrastructure constraint: this
+# file defines ONLY reader + postgres. RabbitMQ and MinIO are assumed
+# to be externally managed and are never started here, even though
+# this MVP phase connects to them (see .env.example).
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: reader
+      POSTGRES_PASSWORD: reader
+      POSTGRES_DB: reader
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  reader:
+    build: .
+    depends_on:
+      - postgres
+    env_file:
+      - .env
+    environment:
+      DATABASE_DSN: postgres://reader:reader@postgres:5432/reader?sslmode=disable
+
+volumes:
+  postgres-data:

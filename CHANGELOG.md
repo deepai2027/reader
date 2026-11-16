@@ -8,7 +8,43 @@ minor versions as the architecture settles.
 
 ## [Unreleased]
 
-Nothing yet.
+MVP: reliability + full infrastructure integration (see
+`specs/2026-11-10-mvp/`). Pending a real build/test pass before this
+section moves to a versioned release - see that spec's `plan.md`
+status notes.
+
+### Added
+
+- Checkpointing after every batch and crash-recovery/resume
+  (`internal/processing/pipeline`), proven by fault-injection tests.
+- Reliable delivery: a retrying publisher wrapper with transient/
+  permanent failure semantics (`internal/delivery/local`).
+- Real PostgreSQL persistence (`internal/storage`, `migrations/`),
+  replacing the Phase 0 stub `ProgressStore`/`RegexSource`.
+- Real MinIO file download (`internal/objectstore`), replacing the
+  stub `FileSource`.
+- Agent polling client and single-file concurrency enforcement
+  (`internal/agent`, `internal/orchestrate`), built from the README's
+  documented contract (not yet verified against a real Agent).
+- Real RabbitMQ delivery (`internal/rabbitmq`).
+- `cmd/reader -mode=agent`: the real end-to-end polling loop.
+- `docker-compose.yml` and `Dockerfile` (reader + postgres only, per
+  the infrastructure constraint in `specs/tech-stack.md`).
+
+### Known Gaps (intentional, see `specs/2026-11-10-mvp/validation.md`)
+
+- Unique-URL dedup state is not persisted across a restart - a URL may
+  be re-emitted to the Unique URL topic after a crash/resume.
+- A batch that fails partway through is fully reprocessed on resume,
+  which can re-publish already-succeeded records within that batch
+  (downstream `record_hash` dedup is the intended safety net).
+- Status API, Log Rotation, and Phase 3 performance hardening are not
+  included.
+- The Agent, RabbitMQ topic, and MinIO wiring have not been run
+  against real instances in the environment that wrote them - no Go
+  toolchain or network access there. `test/integration/mvp_test.go`
+  and `cmd/reader`'s `-mode=agent` wiring are the highest-risk,
+  least-verified code in this release.
 
 ## [0.1.0] - 2026-11-09
 

@@ -124,3 +124,84 @@ func isValidLogLevel(level string) bool {
 		return false
 	}
 }
+
+// InfraConfig holds the connection settings introduced by the MVP
+// phase (specs/2026-11-10-mvp/plan.md Groups 5-8): PostgreSQL, MinIO,
+// RabbitMQ, and the Agent API.
+//
+// This is loaded separately from Config, via LoadInfra rather than
+// Load, so that anything exercising only the core pipeline - unit
+// tests, the manual -file CLI trigger - never requires infrastructure
+// it isn't using. Only cmd/reader's "-mode=agent" path calls
+// LoadInfra.
+type InfraConfig struct {
+	DatabaseDSN string
+
+	MinIOEndpoint  string
+	MinIOAccessKey string
+	MinIOSecretKey string
+	MinIOBucket    string
+	MinIOUseSSL    bool
+
+	RabbitMQURL             string
+	RabbitMQFullRecordTopic string
+	RabbitMQUniqueURLTopic  string
+
+	AgentBaseURL             string
+	AgentAPIKey              string
+	AgentPollIntervalSeconds int
+}
+
+// LoadInfra reads and validates InfraConfig from the process
+// environment, aggregating all validation errors the same way Load
+// does for Config.
+func LoadInfra() (InfraConfig, error) {
+	return loadInfra(os.LookupEnv)
+}
+
+func loadInfra(lookup envLookup) (InfraConfig, error) {
+	var errs []string
+
+	cfg := InfraConfig{
+		DatabaseDSN: mustString(lookup, "DATABASE_DSN", &errs),
+
+		MinIOEndpoint:  mustString(lookup, "MINIO_ENDPOINT", &errs),
+		MinIOAccessKey: mustString(lookup, "MINIO_ACCESS_KEY", &errs),
+		MinIOSecretKey: mustString(lookup, "MINIO_SECRET_KEY", &errs),
+		MinIOBucket:    mustString(lookup, "MINIO_BUCKET", &errs),
+		MinIOUseSSL:    boolOrDefault(lookup, "MINIO_USE_SSL", false),
+
+		RabbitMQURL:             mustString(lookup, "RABBITMQ_URL", &errs),
+		RabbitMQFullRecordTopic: stringOrDefault(lookup, "RABBITMQ_FULL_RECORD_TOPIC", "reader.full_record"),
+		RabbitMQUniqueURLTopic:  stringOrDefault(lookup, "RABBITMQ_UNIQUE_URL_TOPIC", "reader.unique_url"),
+
+		AgentBaseURL:             mustString(lookup, "AGENT_BASE_URL", &errs),
+		AgentAPIKey:              mustString(lookup, "AGENT_API_KEY", &errs),
+		AgentPollIntervalSeconds: mustInt(lookup, "AGENT_POLL_INTERVAL_SECONDS", &errs),
+	}
+
+	if cfg.AgentPollIntervalSeconds <= 0 {
+		errs = append(errs, "AGENT_POLL_INTERVAL_SECONDS must be a positive integer")
+	}
+
+	if len(errs) > 0 {
+		return InfraConfig{}, fmt.Errorf("invalid infrastructure configuration:\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	return cfg, nil
+}
+
+func mustString(lookup envLookup, key string, errs *[]string) string {
+	raw, ok := lookup(key)
+	if !ok || raw == "" {
+		*errs = append(*errs, fmt.Sprintf("%s is required", key))
+	}
+	return raw
+}
+
+func boolOrDefault(lookup envLookup, key string, def bool) bool {
+	raw, ok := lookup(key)
+	if !ok || raw == "" {
+		return def
+	}
+	return raw == "true" || raw == "1" || raw == "yes"
+}

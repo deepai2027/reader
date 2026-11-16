@@ -1,5 +1,40 @@
 # Plan — MVP: Reliability + Full Infrastructure Integration
 
+## Implementation Status (2026-11-10)
+
+All 9 groups are implemented, each as its own commit on branch `mvp`.
+Confidence varies sharply by group - this table is ordered by risk,
+not by group number, because that's the more useful read before
+relying on any of it:
+
+| Group | Confidence | Why |
+|---|---|---|
+| 1-4 (Reliability) | **High** | Pure Go, builds only on already-reviewed Phase 0/1 code, no new third-party APIs. Proven by fault-injection tests in `internal/processing/pipeline/recovery_test.go`. |
+| 3 (Retrying publisher) | **High** | Same reasoning; `internal/delivery/local` has 6 tests covering retry/backoff/permanent/transient/cancellation. |
+| 7 (Agent client) | **High** | Stdlib `net/http`/`httptest` only, no third-party SDK. Tested against a real `httptest.Server`. |
+| 5 (PostgreSQL) | **Medium** | Adapter logic is plain `database/sql` (stable stdlib API), but has **no unit test** - `DB`'s concrete methods can't be faked meaningfully without a real database, so this is unverified beyond manual review until the Group 9 integration test runs. |
+| 8 (RabbitMQ) | **Medium** | Adapter logic is tested against a fake `Channel`, but `amqp091-go`'s exact API (`PublishWithContext`, `amqp.Publishing`) was written from training-data recall, not a compiler. |
+| 6 (MinIO) | **Medium-low** | No unit test possible (`Client.GetObject` returns a concrete `*minio.Object`); `minio-go`'s API was also written from recall. |
+| 9 (Wiring: `cmd/reader -mode=agent`) | **Low** | Combines Groups 5-8's adapters together for the first time; never compiled. |
+| 9 (`test/integration/mvp_test.go`) | **Lowest** | Combines four unfamiliar `testcontainers-go` module APIs plus `golang-migrate` in one file, written blind. Treat every line with suspicion - see the file's own warning comment. |
+
+**Nothing in this phase has been run.** No Go toolchain, no network,
+no Docker in the environment that wrote it. Beyond the usual `make
+build vet test`, this phase additionally needs:
+
+1. **`go mod tidy`** — four new real dependencies plus `testcontainers-go`
+   and three of its modules were hand-added to `go.mod`. Expect version
+   corrections, especially for `testcontainers-go`'s heavy transitive
+   dependency tree.
+2. **`make test-integration`** (requires Docker) — the real test of
+   Groups 5, 6, 8, and 9's wiring. This is the first thing to run after
+   `go mod tidy` succeeds, specifically *because* it's the least
+   verified: better to find out immediately whether the container
+   module APIs guessed at above are even close to right.
+3. A real Agent contract review (see `requirements.md`'s open item) -
+   `internal/agent`'s endpoint path and response shape are a best
+   reading of the README, confirmed against nothing real.
+
 Reliability is built and proven against the Phase 0/1 local adapters
 first (Groups 1–4), then each real infrastructure adapter replaces its
 local counterpart one at a time, in the roadmap's existing A–D order
@@ -9,7 +44,7 @@ real adapter never gets to skip the bar the local one already cleared.
 
 ---
 
-## 1. Checkpointing
+## 1. Checkpointing ✅ implemented, high confidence
 
 **Depends on:** Phase 1 (`internal/processing/pipeline`, `ports.ProgressStore`).
 
@@ -33,7 +68,7 @@ batch-granularity, not just at completion.
 
 ---
 
-## 2. Recovery / Resume Workflow
+## 2. Recovery / Resume Workflow ✅ implemented, high confidence
 
 **Depends on:** 1.
 
@@ -67,7 +102,7 @@ success.
 
 ---
 
-## 3. Reliable Message Delivery (Local Adapter)
+## 3. Reliable Message Delivery (Local Adapter) ✅ implemented, high confidence
 
 **Depends on:** 1 (needs checkpointing in place so a mid-batch publish
 failure has somewhere correct to leave `CurrentLine`).
@@ -97,7 +132,7 @@ proven against a local in-memory sink, independent of any real broker.
 
 ---
 
-## 4. Fault-Injection Test Harness & Reliability Proof
+## 4. Fault-Injection Test Harness & Reliability Proof ✅ implemented, high confidence
 
 **Depends on:** 1–3.
 
@@ -122,7 +157,7 @@ subsequent infra swap (Groups 5–8) must clear again.
 
 ---
 
-## 5. Final Phase / Step A — PostgreSQL Persistence
+## 5. Final Phase / Step A — PostgreSQL Persistence ⚠️ implemented, no unit test, unverified
 
 **Depends on:** 1–4 (reliability proven locally first).
 
@@ -150,7 +185,7 @@ time against a real, ephemeral PostgreSQL instance.
 
 ---
 
-## 6. Final Phase / Step B — MinIO File Download
+## 6. Final Phase / Step B — MinIO File Download ⚠️ implemented, no unit test, unverified
 
 **Depends on:** 5 (file identity/metadata now has somewhere real to be
 recorded alongside download).
@@ -177,7 +212,7 @@ MinIO bucket and handed into the Phase 1 pipeline unmodified.
 
 ---
 
-## 7. Final Phase / Step C — Agent Integration & Single-File Concurrency
+## 7. Final Phase / Step C — Agent Integration & Single-File Concurrency ✅ implemented, high confidence
 
 **Depends on:** 5, 6 (needs somewhere to record file state and
 somewhere to download from before there's anything meaningful to poll
@@ -208,7 +243,7 @@ while a file is `reading`.
 
 ---
 
-## 8. Final Phase / Step D — Real RabbitMQ Delivery
+## 8. Final Phase / Step D — Real RabbitMQ Delivery ⚠️ implemented, tested against a fake, unverified vs real API
 
 **Depends on:** 1–4 (reliability/retry semantics), 7 (something now
 triggers real processing end-to-end).
@@ -231,7 +266,7 @@ independently consumed and inspected in the test.
 
 ---
 
-## 9. MVP End-to-End Integration & CI
+## 9. MVP End-to-End Integration & CI ❗ implemented, lowest confidence — see status table
 
 **Depends on:** 1–8.
 
