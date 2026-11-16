@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS file_management;
+DROP TABLE IF EXISTS regex;
