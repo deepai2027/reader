@@ -62,7 +62,7 @@ func main() {
 		return
 	}
 
-	stats, err := pipeline.ProcessFile(context.Background(), *filePath, *filePath, 0, deps)
+	stats, err := pipeline.Run(context.Background(), *filePath, *filePath, 0, deps)
 	if err != nil {
 		logger.Error("pipeline run failed", "file", *filePath, "error", err)
 		os.Exit(1)

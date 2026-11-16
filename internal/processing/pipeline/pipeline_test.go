@@ -63,7 +63,7 @@ func TestProcessFile_WellFormed(t *testing.T) {
 	pub := &capturingPublisher{}
 	deps := testDeps(t, pub)
 
-	stats, err := ProcessFile(context.Background(), "file-1", "../testdata/well_formed.txt", 3, deps)
+	stats, err := Run(context.Background(), "file-1", "../testdata/well_formed.txt", 3, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestProcessFile_MixedValidInvalid(t *testing.T) {
 	pub := &capturingPublisher{}
 	deps := testDeps(t, pub)
 
-	stats, err := ProcessFile(context.Background(), "file-2", "../testdata/mixed_valid_invalid.txt", 1, deps)
+	stats, err := Run(context.Background(), "file-2", "../testdata/mixed_valid_invalid.txt", 1, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestProcessFile_NoMatch(t *testing.T) {
 	pub := &capturingPublisher{}
 	deps := testDeps(t, pub)
 
-	stats, err := ProcessFile(context.Background(), "file-3", "../testdata/no_match.txt", 1, deps)
+	stats, err := Run(context.Background(), "file-3", "../testdata/no_match.txt", 1, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestProcessFile_EmptyFile(t *testing.T) {
 	pub := &capturingPublisher{}
 	deps := testDeps(t, pub)
 
-	stats, err := ProcessFile(context.Background(), "file-4", "../testdata/empty.txt", 1, deps)
+	stats, err := Run(context.Background(), "file-4", "../testdata/empty.txt", 1, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestProcessFile_DuplicateURLsDedup(t *testing.T) {
 	pub := &capturingPublisher{}
 	deps := testDeps(t, pub)
 
-	stats, err := ProcessFile(context.Background(), "file-5", "../testdata/duplicate_urls.txt", 1, deps)
+	stats, err := Run(context.Background(), "file-5", "../testdata/duplicate_urls.txt", 1, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestProcessFile_BlankLinesDoNotCrash(t *testing.T) {
 	pub := &capturingPublisher{}
 	deps := testDeps(t, pub)
 
-	stats, err := ProcessFile(context.Background(), "file-6", "../testdata/blank_lines.txt", 1, deps)
+	stats, err := Run(context.Background(), "file-6", "../testdata/blank_lines.txt", 1, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestProcessFile_NormalizationEdgeCases(t *testing.T) {
 	pub := &capturingPublisher{}
 	deps := testDeps(t, pub)
 
-	stats, err := ProcessFile(context.Background(), "file-7", "../testdata/normalization_edge_cases.txt", 1, deps)
+	stats, err := Run(context.Background(), "file-7", "../testdata/normalization_edge_cases.txt", 1, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
