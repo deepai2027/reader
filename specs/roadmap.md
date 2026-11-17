@@ -127,7 +127,12 @@ everything around it.
 
 ---
 
-### Phase 2 — Processing Reliability & Fault Tolerance
+### Phase 2 — Processing Reliability & Fault Tolerance ✅ Complete (merged 2026-11-17)
+
+**Status:** merged into `main` as part of the `mvp` branch. Checkpointing,
+resume, and local delivery retry/failure semantics are covered by
+`internal/processing/pipeline/recovery_test.go`; `go build`, `go vet`, and
+`go test ./...` pass on Go 1.26.
 
 **Goal:** Make the Phase 1 pipeline provably fault-tolerant — the
 reliability guarantees from `mission.md` ("no line is ever lost, no line
@@ -212,7 +217,14 @@ Per the key requirement, **this is where Agent integration, MinIO
 downloading, database implementation, and API development happen — not
 before.**
 
-### Final Phase / Step A — PostgreSQL Persistence
+**Status:** Steps A–D are implemented and merged via the `mvp` branch
+(2026-11-17); see `specs/2026-11-10-mvp/`. Build, vet, and unit tests
+pass, but the Docker-backed integration suite did not complete in this
+environment (testcontainers image pull timed out), so the
+real-infrastructure adapters are merged but still unverified end-to-end.
+Steps E–G remain open.
+
+### Final Phase / Step A — PostgreSQL Persistence ✅ Complete (merged 2026-11-17)
 
 - `docker-compose.yml` introduced for the first time: **only** `reader` +
   `postgres`, per the explicit infrastructure constraint.
@@ -228,7 +240,7 @@ before.**
   confirm the reliability guarantees still hold with a real database in
   the loop (transaction boundaries, connection drops, etc.).
 
-### Final Phase / Step B — MinIO File Download
+### Final Phase / Step B — MinIO File Download ✅ Complete (merged 2026-11-17)
 
 - Real `FileSource` adapter: streaming download from MinIO into the
   local working directory, replacing the "point at a local fixture file"
@@ -237,7 +249,7 @@ before.**
   `mission.md`); deleted locally on completion or on confirmed no-match,
   **never** deleted from MinIO by normal processing.
 
-### Final Phase / Step C — Agent Integration & Single-File Concurrency
+### Final Phase / Step C — Agent Integration & Single-File Concurrency ✅ Complete (merged 2026-11-17)
 
 - Agent API client: polling loop, configurable interval, `file_id` +
   `priority` retrieval.
@@ -247,7 +259,7 @@ before.**
 - File receipt workflow: persist file info, trigger Step B download,
   then hand off into the Phase 1–3 pipeline.
 
-### Final Phase / Step D — Real RabbitMQ Delivery
+### Final Phase / Step D — Real RabbitMQ Delivery ✅ Complete (merged 2026-11-17)
 
 - Real `MessagePublisher` adapter: `amqp091-go`, two topics (Full Record,
   Unique URL), `x-max-priority` queue configuration matching the Agent's

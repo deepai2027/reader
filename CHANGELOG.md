@@ -13,6 +13,28 @@ MVP: reliability + full infrastructure integration (see
 section moves to a versioned release - see that spec's `plan.md`
 status notes.
 
+### Commits
+
+- Phase MVP / Group 9: wiring, config, CI, docker-compose, end-to-end test, status notes (9c26bef)
+- Phase MVP / Group 8: real RabbitMQ delivery adapter (64d29fb)
+- Phase MVP / Group 7: Agent integration + single-file concurrency (7eee469)
+- Phase MVP / Group 6: MinIO file download (FileSource adapter) (ae436d8)
+- Phase MVP / Group 5: PostgreSQL persistence (storage adapters + migrations) (621bfb5)
+- Phase MVP / Group 3: reliable delivery (local retrying publisher) (d97ea7b)
+- Phase MVP / Groups 1-2: checkpointing + crash recovery/resume (2650bcc)
+- Add MVP feature spec: reliability + full infra integration (requirements, plan, validation) (2605b85)
+- Mark Phase 0 and Phase 1 complete in roadmap.md; resolve regex tie-break open item (4ba81af)
+- Phase 1 / Group 9: status notes on plan.md (go mod tidy + real build still required) (35f1b80)
+- Phase 1 / Group 8: end-to-end pipeline orchestration + manual CLI trigger (bfe58fd)
+- Phase 1 / Group 7: unique-URL derivation (4813435)
+- Phase 1 / Group 6: hashing & record assembly (77ec937)
+- Phase 1 / Group 5: URL normalization + domain/subdomain/suffix/port (773511f)
+- Phase 1 / Group 4: validation (397dbed)
+- Phase 1 / Group 3: extraction (72a8c91)
+- Phase 1 / Group 2: regex engine seam + regex selection (2ded45e)
+- Phase 1 / Group 1: batch reader (fd95d49)
+- Add feature spec: Phase 1 core file-processing pipeline (requirements, plan, validation) (4ab608c)
+
 ### Added
 
 - Checkpointing after every batch and crash-recovery/resume

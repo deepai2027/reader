@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"flag"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver
+	"github.com/joho/godotenv"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -37,7 +39,9 @@ func main() {
 			`"agent": poll the real Agent and process against real infrastructure (requires LoadInfra's env vars).`)
 	filePath := flag.String("file", "", "manual mode only: path to a local file to process")
 	flag.Parse()
-
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using environment variables")
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		fallback := slog.New(slog.NewTextHandler(os.Stderr, nil))

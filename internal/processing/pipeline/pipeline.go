@@ -269,9 +269,23 @@ type runState struct {
 // more than one batch in memory at a time, preserving the
 // memory-bounded guarantee from internal/processing/batch.
 func (r *runState) drain(ctx context.Context, firstBatch []domain.RawLine, reader *batch.Reader) (Stats, error) {
+	// firstBatch is the buffered regex-selection window on a fresh
+	// start, which can be much larger than BatchSize. Split it into
+	// real batches so checkpointing remains batch-granular and a crash
+	// here resumes from the last completed batch, not the file start.
 	if len(firstBatch) > 0 {
-		if err := r.processBatch(ctx, firstBatch); err != nil {
-			return Stats{}, err
+		batchSize := r.deps.Config.BatchSize
+		if batchSize <= 0 {
+			batchSize = len(firstBatch)
+		}
+		for start := 0; start < len(firstBatch); start += batchSize {
+			end := start + batchSize
+			if end > len(firstBatch) {
+				end = len(firstBatch)
+			}
+			if err := r.processBatch(ctx, firstBatch[start:end]); err != nil {
+				return Stats{}, err
+			}
 		}
 	}
 

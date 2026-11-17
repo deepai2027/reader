@@ -23,3 +23,6 @@ fmt:
 
 run: build
 	./bin/reader
+
+run-agent: build
+	./bin/reader -mode=agent

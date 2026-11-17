@@ -12,11 +12,14 @@ import (
 
 func TestPoll_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/files/next" {
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method %q", r.Method)
+		}
+		if r.URL.Path != "/api/reader/new_file/" {
 			t.Errorf("unexpected path %q", r.URL.Path)
 		}
-		if r.Header.Get("Authorization") != "Bearer test-key" {
-			t.Errorf("missing/incorrect Authorization header: %q", r.Header.Get("Authorization"))
+		if r.Header.Get("X-API-Key") != "test-key" {
+			t.Errorf("missing/incorrect X-API-Key header: %q", r.Header.Get("X-API-Key"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(PolledFile{FileID: "abc123", Priority: 5})
