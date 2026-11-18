@@ -1,9 +1,3 @@
-// Package local provides Reader's first reliable-delivery adapter: a
-// retry/backoff wrapper around any ports.MessagePublisher sink. It
-// exists to prove retry/backoff/failure-surfacing behavior against a
-// local sink before any real broker is involved - see
-// specs/2026-11-10-mvp/plan.md Group 3. The real RabbitMQ adapter
-// (internal/rabbitmq, Group 8) is wrapped by the same type, unchanged.
 package local
 
 import (
@@ -16,14 +10,7 @@ import (
 	"github.com/yourorg/reader/internal/ports"
 )
 
-// RetryingPublisher wraps an underlying ports.MessagePublisher (the
-// "sink") with retry/backoff for transient failures.
-//
-// A sink's error is treated as transient if errors.Is(err,
-// ports.ErrTransient), as permanent if errors.Is(err,
-// ports.ErrPermanent), and as permanent by default otherwise: retrying
-// an error whose nature is unknown risks retrying something that will
-// never succeed, so the fail-safe default is not to retry.
+// RetryingPublisher wraps an underlying ports.MessagePublisher
 type RetryingPublisher struct {
 	sink        ports.MessagePublisher
 	maxAttempts int

@@ -1,10 +1,3 @@
-// Package pipeline orchestrates Reader's core file-processing run:
-// resume-or-start -> select regex -> batch -> extract -> validate ->
-// normalize -> hash/assemble -> dedupe unique URLs -> publish ->
-// checkpoint after every batch. See
-// specs/2026-11-09-core-file-processing-pipeline/plan.md (original
-// pipeline) and specs/2026-11-10-mvp/plan.md Groups 1-2 (checkpointing
-// and recovery, added on top of it).
 package pipeline
 
 import (
@@ -46,30 +39,6 @@ type Stats struct {
 	SelectedPattern *domain.RegexPattern
 }
 
-// Run processes fileID end-to-end. If ProgressStore already has an
-// in-progress (reading) run for fileID, Run resumes it (MVP Group 2)
-// rather than starting over; if ProgressStore shows the file already
-// done, Run is a no-op (idempotent against a duplicate trigger).
-// Otherwise it starts fresh, exactly as Phase 1 originally did.
-//
-// Progress is checkpointed after every batch (MVP Group 1), not just
-// at completion, so a crash mid-file leaves a precise resume point
-// rather than forcing a full restart.
-//
-// Known MVP limitation (see specs/2026-11-10-mvp/plan.md Group 2 and
-// validation.md section 2): unique-URL dedup state is in-memory and
-// scoped to a single Run call. A resumed run starts dedup over, so a
-// URL already published to the Unique URL topic before a crash may be
-// published again after resume. This is accepted and tested (see
-// pipeline/recovery_test.go), not silently hidden.
-//
-// Known MVP limitation (batch-level, not line-level, atomicity): if a
-// batch fails partway through (some lines published, then an error),
-// its checkpoint is not written, so resume reprocesses the *whole*
-// batch from its start - lines that had already published
-// successfully within that failed batch may be published again.
-// Downstream record_hash-based dedup is the safety net for this, by
-// design (see specs/mission.md).
 func Run(ctx context.Context, fileID, fileRef string, priority int, deps Deps) (Stats, error) {
 	existing, found, err := deps.Progress.Load(ctx, fileID)
 	if err != nil {
@@ -97,9 +66,6 @@ func Run(ctx context.Context, fileID, fileRef string, priority int, deps Deps) (
 	return startFresh(ctx, fileID, priority, reader, deps)
 }
 
-// startFresh runs the original Phase 1 flow: scan the selection
-// window, choose a regex pattern, persist that choice before
-// processing any line, then drain the rest of the file.
 func startFresh(ctx context.Context, fileID string, priority int, reader *batch.Reader, deps Deps) (Stats, error) {
 	window := make([]domain.RawLine, 0, regexselect.WindowSize)
 	var pending []domain.RawLine
@@ -151,9 +117,6 @@ func startFresh(ctx context.Context, fileID string, priority int, reader *batch.
 
 	selectedID := selection.Pattern.ID
 
-	// Persist selection + reading status BEFORE processing any line
-	// (MVP Group 1): a crash during the very first batch still has
-	// something correct to resume from.
 	initial := domain.FileState{
 		FileID: fileID, Status: domain.FileStatusReading,
 		CurrentLine: 0, MatchedCount: 0,
@@ -207,11 +170,7 @@ func resume(ctx context.Context, fileID string, priority int, existing domain.Fi
 		return Stats{}, fmt.Errorf("pipeline: resume: recompiling pattern %d: %w", selected.ID, err)
 	}
 
-	// Discard lines already processed before the crash. This is a
-	// read-and-discard approach, O(file size) rather than a true seek,
-	// a deliberate simplification (specs/2026-11-10-mvp/plan.md
-	// Group 2): correctness first, revisit for performance in Phase 3
-	// if profiling shows it matters.
+
 	var discarded int64
 	for discarded < existing.CurrentLine {
 		b, done, err := reader.NextBatch(ctx)
@@ -246,9 +205,7 @@ func resume(ctx context.Context, fileID string, priority int, existing domain.Fi
 	return stats, nil
 }
 
-// runState carries the per-run state shared across drain/processBatch/
-// processLine/checkpoint, so none of it needs to be threaded through
-// every call explicitly.
+
 type runState struct {
 	fileID     string
 	priority   int
@@ -262,12 +219,7 @@ type runState struct {
 	lastLine int64
 }
 
-// drain processes firstBatch (if non-empty - the already-buffered
-// selection window on a fresh start, or nil on resume), checkpointing
-// afterward, then continues reading and processing batches from reader
-// until exhausted, checkpointing after every batch. It never holds
-// more than one batch in memory at a time, preserving the
-// memory-bounded guarantee from internal/processing/batch.
+
 func (r *runState) drain(ctx context.Context, firstBatch []domain.RawLine, reader *batch.Reader) (Stats, error) {
 	// firstBatch is the buffered regex-selection window on a fresh
 	// start, which can be much larger than BatchSize. Split it into

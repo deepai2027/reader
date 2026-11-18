@@ -1,8 +1,3 @@
-// Package config loads and validates Reader's Phase 0-3 runtime
-// configuration: the parameters the core processing pipeline needs.
-// It deliberately does not yet cover PostgreSQL, MinIO, RabbitMQ, or
-// Agent connection settings - those are added as each Final Phase
-// step lands (see specs/roadmap.md).
 package config
 
 import (
@@ -15,22 +10,18 @@ import (
 // Config holds Reader's core-pipeline configuration.
 type Config struct {
 	// BatchSize is the number of lines read and processed per batch
-	// (README section 5.1). Must be a positive integer.
 	BatchSize int
 
 	// MinUsernameLength and MaxUsernameLength bound valid extracted
-	// usernames (README section 7.2).
 	MinUsernameLength int
 	MaxUsernameLength int
 
 	// MinPasswordLength and MaxPasswordLength bound valid extracted
-	// passwords (README section 7.2).
 	MinPasswordLength int
 	MaxPasswordLength int
 
 	// RetryMaxAttempts is the maximum number of retry attempts for a
 	// transient publish failure before it is treated as a hard failure
-	// (Phase 2 reliability logic).
 	RetryMaxAttempts int
 
 	// RetryBaseDelayMS is the base delay, in milliseconds, used for
@@ -48,9 +39,6 @@ type Config struct {
 type envLookup func(key string) (string, bool)
 
 // Load reads and validates configuration from the process environment.
-// It aggregates all validation errors into a single returned error
-// rather than failing on the first problem, so a misconfigured
-// environment can be fixed in one pass instead of one error at a time.
 func Load() (Config, error) {
 	return load(os.LookupEnv)
 }
@@ -125,15 +113,6 @@ func isValidLogLevel(level string) bool {
 	}
 }
 
-// InfraConfig holds the connection settings introduced by the MVP
-// phase (specs/2026-11-10-mvp/plan.md Groups 5-8): PostgreSQL, MinIO,
-// RabbitMQ, and the Agent API.
-//
-// This is loaded separately from Config, via LoadInfra rather than
-// Load, so that anything exercising only the core pipeline - unit
-// tests, the manual -file CLI trigger - never requires infrastructure
-// it isn't using. Only cmd/reader's "-mode=agent" path calls
-// LoadInfra.
 type InfraConfig struct {
 	DatabaseDSN string
 

@@ -1,11 +1,3 @@
-// Package storage provides the real, PostgreSQL-backed adapters for
-// ports.ProgressStore and ports.RegexSource. See
-// specs/2026-11-10-mvp/plan.md Group 5. Built on database/sql, with
-// jackc/pgx/v5's stdlib driver registered by the caller (import
-// "github.com/jackc/pgx/v5/stdlib" for its side effect and
-// sql.Open("pgx", dsn)) - per specs/tech-stack.md, this keeps the
-// adapter itself written against the stable stdlib database/sql API
-// rather than pgx's native one.
 package storage
 
 import (
@@ -17,17 +9,12 @@ import (
 	"github.com/yourorg/reader/internal/domain"
 )
 
-// DB is the minimal subset of *sql.DB these adapters need, so they can
-// be tested against a fake without a real database.
 type DB interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// ProgressStore is the PostgreSQL-backed ports.ProgressStore adapter,
-// replacing internal/ports/stub.ProgressStore and the MVP Groups 1-4
-// local adapter behind the same interface.
 type ProgressStore struct {
 	db DB
 }

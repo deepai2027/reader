@@ -1,7 +1,3 @@
-// Command reader is Reader's entry point. "-mode=manual" (default)
-// processes one local file via the Phase 0/1 stub adapters - a dev
-// trigger only. "-mode=agent" runs the real polling loop against real
-// infrastructure (specs/2026-11-10-mvp/plan.md Groups 5-8).
 package main
 
 import (
@@ -90,17 +86,7 @@ func runManualMode(logger *slog.Logger, cfg config.Config, filePath string) {
 	)
 }
 
-// runAgentMode wires every real infrastructure adapter added in the
-// MVP phase and runs the single-file polling loop until interrupted.
-//
-// This is the least-verified code in this entire phase: it has never
-// been compiled, let alone run against real PostgreSQL/MinIO/
-// RabbitMQ/Agent instances, in the environment that wrote it (no Go
-// toolchain, no network access there). The individual adapters behind
-// it (internal/storage, internal/objectstore, internal/rabbitmq,
-// internal/agent) each have unit tests against fakes; this function -
-// the wiring itself - does not, and is correspondingly the highest-
-// risk code to review before relying on it.
+
 func runAgentMode(logger *slog.Logger, cfg config.Config) {
 	infra, err := config.LoadInfra()
 	if err != nil {

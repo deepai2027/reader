@@ -1,6 +1,3 @@
-// Package normalize turns a raw extracted URL into a canonical form
-// and derives its domain/subdomain/suffix/port. See
-// specs/2026-11-09-core-file-processing-pipeline/plan.md Group 5.
 package normalize
 
 import (
@@ -21,21 +18,7 @@ type Normalized struct {
 	Port      string // empty if none, or if it's the scheme's default port
 }
 
-// URL normalizes raw into a canonical form and extracts its
-// domain/subdomain/suffix/port. Documented edge-case behavior (see
-// plan.md Group 5):
-//
-//   - A scheme-less input (no "://") is assumed to be "http://".
-//   - Scheme and host are lowercased.
-//   - A bare-path trailing slash ("http://example.com/") is removed,
-//     so "http://example.com" and "http://example.com/" normalize
-//     identically.
-//   - An explicit default port for the scheme (":80" for http, ":443"
-//     for https) is stripped as redundant.
-//   - Any userinfo in the input (e.g. "user:pass@host") is dropped -
-//     it never appears in the normalized form.
-//   - An IP-address host has no domain/subdomain/suffix; those fields
-//     come back empty, not an error.
+
 func URL(raw string) (Normalized, error) {
 	candidate := raw
 	if !strings.Contains(candidate, "://") {

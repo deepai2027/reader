@@ -1,6 +1,3 @@
-// Package objectstore provides the real, MinIO-backed ports.FileSource
-// adapter, replacing internal/ports/stub.FileSource's local-path
-// os.Open. See specs/2026-11-10-mvp/plan.md Group 6.
 package objectstore
 
 import (
