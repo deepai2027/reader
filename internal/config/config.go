@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const maxBatchSize = 1000
@@ -136,6 +137,8 @@ type InfraConfig struct {
 
 	ReaderAPIKey  string
 	ReaderAPIAddr string
+
+	LogRotationInterval time.Duration
 }
 
 // LoadInfra reads and validates InfraConfig from the process
@@ -172,6 +175,12 @@ func loadInfra(lookup envLookup) (InfraConfig, error) {
 	if cfg.AgentPollIntervalSeconds <= 0 {
 		errs = append(errs, "AGENT_POLL_INTERVAL_SECONDS must be a positive integer")
 	}
+
+	interval, err := time.ParseDuration(stringOrDefault(lookup, "LOG_ROTATION_INTERVAL", "24h"))
+	if err != nil || interval <= 0 {
+		errs = append(errs, "LOG_ROTATION_INTERVAL must be a positive duration (for example, 24h)")
+	}
+	cfg.LogRotationInterval = interval
 
 	if len(errs) > 0 {
 		return InfraConfig{}, fmt.Errorf("invalid infrastructure configuration:\n  - %s", strings.Join(errs, "\n  - "))

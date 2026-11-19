@@ -24,12 +24,15 @@ import (
 // Deps are the pipeline's external dependencies, injected explicitly
 // rather than as package-level globals.
 type Deps struct {
-	Progress  ports.ProgressStore
-	Publisher ports.MessagePublisher
-	Regexes   ports.RegexSource
-	Files     ports.FileSource
-	Config    config.Config
-	Logger    *slog.Logger
+	// LockProcessing optionally reserves the file before inspecting its state
+	// or opening its source. A nil release means another worker owns it.
+	LockProcessing func(context.Context, string) (release func(), err error)
+	Progress       ports.ProgressStore
+	Publisher      ports.MessagePublisher
+	Regexes        ports.RegexSource
+	Files          ports.FileSource
+	Config         config.Config
+	Logger         *slog.Logger
 }
 
 // Stats summarizes the outcome of one Run call.
@@ -42,6 +45,16 @@ type Stats struct {
 }
 
 func Run(ctx context.Context, fileID, fileRef string, priority int, deps Deps) (Stats, error) {
+	if deps.LockProcessing != nil {
+		release, err := deps.LockProcessing(ctx, fileID)
+		if err != nil {
+			return Stats{}, fmt.Errorf("pipeline: locking file %q: %w", fileID, err)
+		}
+		if release == nil {
+			return Stats{}, nil
+		}
+		defer release()
+	}
 	existing, found, err := deps.Progress.Load(ctx, fileID)
 	if err != nil {
 		return Stats{}, fmt.Errorf("pipeline: loading existing state for %q: %w", fileID, err)

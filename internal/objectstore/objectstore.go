@@ -14,6 +14,21 @@ type Client interface {
 	GetObject(ctx context.Context, bucketName, objectName string, opts minio.GetObjectOptions) (*minio.Object, error)
 }
 
+type DeleteClient interface {
+	RemoveObject(context.Context, string, string, minio.RemoveObjectOptions) error
+}
+
+// ObjectRemover deletes source objects from the same bucket used by FileSource.
+func ObjectRemover(client DeleteClient, bucket string) func(context.Context, string) error {
+	return func(ctx context.Context, ref string) error {
+		err := client.RemoveObject(ctx, bucket, ref, minio.RemoveObjectOptions{})
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return nil
+		}
+		return err
+	}
+}
+
 // FileSource is the MinIO-backed ports.FileSource adapter.
 type FileSource struct {
 	client Client

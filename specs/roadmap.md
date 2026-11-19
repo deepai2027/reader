@@ -230,7 +230,9 @@ before.**
 pass, but the Docker-backed integration suite did not complete in this
 environment (testcontainers image pull timed out), so the
 real-infrastructure adapters are merged but still unverified end-to-end.
-Steps E–G remain open.
+Step E is implemented and has passed PostgreSQL integration testing. Live
+Agent interoperability and the Docker Compose smoke check remain open.
+Step F is complete. Step G remains open.
 
 ### Final Phase / Step A — PostgreSQL Persistence ✅ Complete (merged 2026-11-17)
 
@@ -284,12 +286,15 @@ Steps E–G remain open.
 - Sources its answers from the now-real PostgreSQL `file_management`
   table (Step A).
 
-### Final Phase / Step F — Log Rotation
+### Final Phase / Step F — Log Rotation ✅ Complete (merged 2026-11-19)
 
-- Scheduled retention job against the real PostgreSQL + MinIO: delete
-  expired records/files after the retention period, excluding any file
-  still `reading`, with retry-on-MinIO-failure and DB-deletion-only-
-  after-MinIO-success ordering.
+- Agent mode schedules cleanup of completed files one calendar month
+  after registration in UTC. PostgreSQL coordinates cleanup with processing
+  and keeps the record until MinIO confirms object deletion or absence.
+  Failed cleanup is retried on later runs.
+- Build, vet, unit tests, PostgreSQL and MinIO integration tests, and a
+  local scheduled-run deployment smoke test passed. See
+  [Step F validation](2026-11-19-log-rotation/validation.md).
 
 ### Final Phase / Step G — End-to-End Hardening
 

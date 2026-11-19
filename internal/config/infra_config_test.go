@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func validInfraEnv() map[string]string {
@@ -17,6 +18,32 @@ func validInfraEnv() map[string]string {
 		"AGENT_API_KEY":               "test-key",
 		"READER_API_KEY":              "status-test-key",
 		"AGENT_POLL_INTERVAL_SECONDS": "10",
+	}
+}
+
+func TestLoadInfra_LogRotationInterval(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"", 24 * time.Hour},
+		{"30s", 30 * time.Second},
+		{"0s", 0},
+		{"-1h", 0},
+		{"30", 0},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			env := validInfraEnv()
+			env["LOG_ROTATION_INTERVAL"] = tc.value
+			cfg, err := loadInfra(lookupFromMap(env))
+			if tc.want == 0 {
+				if err == nil || !strings.Contains(err.Error(), "LOG_ROTATION_INTERVAL") {
+					t.Fatalf("expected interval error, got %v", err)
+				}
+			} else if err != nil || cfg.LogRotationInterval != tc.want {
+				t.Fatalf("interval = %s, want %s, error = %v", cfg.LogRotationInterval, tc.want, err)
+			}
+		})
 	}
 }
 

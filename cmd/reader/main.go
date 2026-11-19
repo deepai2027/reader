@@ -24,6 +24,7 @@ import (
 	"github.com/yourorg/reader/internal/agent"
 	"github.com/yourorg/reader/internal/config"
 	"github.com/yourorg/reader/internal/delivery/local"
+	"github.com/yourorg/reader/internal/logrotation"
 	"github.com/yourorg/reader/internal/objectstore"
 	"github.com/yourorg/reader/internal/orchestrate"
 	"github.com/yourorg/reader/internal/ports/stub"
@@ -126,6 +127,7 @@ func runAgentMode(logger *slog.Logger, cfg config.Config) error {
 	defer amqpChannel.Close()
 
 	progress := storage.NewProgressStore(db)
+	rotation := storage.NewRotationStore(db)
 	regexes := storage.NewRegexSource(db)
 	files := objectstore.NewFileSource(minioClient, infra.MinIOBucket)
 
@@ -138,12 +140,13 @@ func runAgentMode(logger *slog.Logger, cfg config.Config) error {
 	agentClient := agent.New(&http.Client{Timeout: 30 * time.Second}, infra.AgentBaseURL, infra.AgentAPIKey)
 
 	deps := pipeline.Deps{
-		Progress:  progress,
-		Publisher: publisher,
-		Regexes:   regexes,
-		Files:     files,
-		Config:    cfg,
-		Logger:    logger,
+		LockProcessing: rotation.LockProcessing,
+		Progress:       progress,
+		Publisher:      publisher,
+		Regexes:        regexes,
+		Files:          files,
+		Config:         cfg,
+		Logger:         logger,
 	}
 
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -177,6 +180,16 @@ func runAgentMode(logger *slog.Logger, cfg config.Config) error {
 		}
 	}()
 	logger.Info("status API listening", "address", listener.Addr().String())
+
+	rotationDone := make(chan struct{})
+	go func() {
+		defer close(rotationDone)
+		logrotation.Run(ctx, infra.LogRotationInterval, rotation, objectstore.ObjectRemover(minioClient, infra.MinIOBucket), logger)
+	}()
+	defer func() {
+		cancel()
+		<-rotationDone
+	}()
 
 	ticker := time.NewTicker(time.Duration(infra.AgentPollIntervalSeconds) * time.Second)
 	defer ticker.Stop()

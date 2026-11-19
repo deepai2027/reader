@@ -538,9 +538,13 @@ The Reader must implement an automated Log Rotation mechanism to manage the life
 
 ### 12.1. Data Retention Period
 
-File records and their processing information must be retained for **one month**.
+File records and their processing information must be retained for **one calendar month**.
 
-After one month from the file's registration date:
+Eligibility begins at the registration timestamp plus one calendar month in
+UTC. If that day does not exist in the target month, use its last day at the
+same UTC time.
+
+Once an expired file is terminal:
 
 - The corresponding database record must be deleted.
 - The associated file must be eligible for deletion from MinIO.
@@ -556,17 +560,25 @@ The process has two main responsibilities:
 
 ### 12.3. Log Rotation Execution
 
-Log Rotation must run automatically on a scheduled basis.
+Log Rotation runs automatically in agent mode using
+`LOG_ROTATION_INTERVAL` (a positive Go duration, default `24h`). Reader
+attempts up to 100 candidates per run and retries failures on later runs.
+The configured MinIO credentials need permission to delete objects in the
+Reader bucket. Object keys identify individual source files and must be
+unique to each registration. Use an unversioned bucket for physical
+deletion. On a versioned bucket, removing a key can leave older versions
+in storage.
 
 Its execution interval must be configurable through the `.env` file.
 
 Additional requirements:
 
-- Files with the `reading` status must never be deleted.
+- Only files in the terminal `done` state are eligible. Active, resumable,
+  and unrecognized states are protected.
 - Database and MinIO deletion operations must be performed in a controlled manner.
 - If MinIO deletion fails, the process must support retry attempts.
 - MinIO file deletion must never result in the removal of information associated with files that are still being processed.
-- The database record must not be removed while the corresponding MinIO deletion is still pending.
+- The database record is removed only after MinIO confirms deletion or absence.
 
 ---
 
@@ -592,7 +604,7 @@ The application must not require source code modifications when runtime configur
 | RabbitMQ Topics | Unique URL topic name. |
 | RabbitMQ Priority | Priority queue configuration. |
 | Log Rotation | Log Rotation execution interval. |
-| Data Retention | File and database retention period (one month). |
+| Data Retention | One calendar month from registration in UTC. |
 
 ### 13.2. Example Environment Variables
 
@@ -641,8 +653,7 @@ RABBITMQ_MAX_PRIORITY=
 BATCH_SIZE=
 
 # Log Rotation
-LOG_ROTATION_INTERVAL=
-DATA_RETENTION_DAYS=30
+LOG_ROTATION_INTERVAL=24h
 ```
 
 **Note:** The environment variable names above are examples and do not represent finalized implementation names.
@@ -672,7 +683,7 @@ The complete Reader workflow is described below:
 17. The Reader deletes the processed file from its local directory.
 18. The Reader requests another file from the Agent.
 19. The Agent can retrieve file processing statuses through the Reader Status API.
-20. Log Rotation automatically deletes database records and MinIO files older than one month, subject to the retention and processing-state rules.
+20. Log Rotation automatically deletes expired database records and MinIO files once their one-calendar-month retention ends, subject to the processing-state rules.
 
 ---
 
