@@ -5,7 +5,8 @@ import "regexp"
 // Pattern is a compiled regex, opaque to callers beyond MatchString
 // and Extract.
 type Pattern struct {
-	re *regexp.Regexp
+	re                      *regexp.Regexp
+	url, username, password int
 }
 
 func Compile(pattern string) (*Pattern, error) {
@@ -13,7 +14,18 @@ func Compile(pattern string) (*Pattern, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Pattern{re: re}, nil
+	compiled := &Pattern{re: re, url: -1, username: -1, password: -1}
+	for i, name := range re.SubexpNames() {
+		switch name {
+		case "url":
+			compiled.url = i
+		case "username":
+			compiled.username = i
+		case "password":
+			compiled.password = i
+		}
+	}
+	return compiled, nil
 }
 
 // MatchString reports whether line matches the pattern.
@@ -23,24 +35,8 @@ func (p *Pattern) MatchString(line string) bool {
 
 func (p *Pattern) Extract(line string) (url, username, password string, ok bool) {
 	match := p.re.FindStringSubmatch(line)
-	if match == nil {
+	if match == nil || p.url < 0 || p.username < 0 || p.password < 0 {
 		return "", "", "", false
 	}
-
-	names := p.re.SubexpNames()
-	values := make(map[string]string, len(names))
-	for i, name := range names {
-		if name == "" {
-			continue
-		}
-		values[name] = match[i]
-	}
-
-	url, hasURL := values["url"]
-	username, hasUsername := values["username"]
-	password, hasPassword := values["password"]
-	if !hasURL || !hasUsername || !hasPassword {
-		return "", "", "", false
-	}
-	return url, username, password, true
+	return match[p.url], match[p.username], match[p.password], true
 }

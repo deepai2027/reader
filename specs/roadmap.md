@@ -178,7 +178,15 @@ proven before infrastructure is in the picture, not after.
 
 ---
 
-### Phase 3 — Large-Scale & Performance Hardening
+### Phase 3 — Large-Scale & Performance Hardening ✅ Complete (merged 2026-11-19)
+
+**Status:** merged into `main`. All 25 benchmark checks passed, along
+with build, vet, unit tests, and race tests. At batch size 500, the
+3 GiB distinct-URL fixture peaked at 38.71 MiB of process memory, down
+from 512.04 MiB, with median throughput of 220.66 MiB/s. The example
+batch size remains 500, with a supported range of 1–1,000. See
+[Phase 3 validation](2026-11-19-large-scale-performance-hardening/validation.md)
+for the full results and reproduction commands.
 
 **Goal:** Stress the core pipeline the way it will actually be used —
 against very large files and adversarial input — before infrastructure

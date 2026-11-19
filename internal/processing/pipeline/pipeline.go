@@ -3,7 +3,9 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/yourorg/reader/internal/config"
@@ -54,44 +56,65 @@ func Run(ctx context.Context, fileID, fileRef string, priority int, deps Deps) (
 	}
 	defer stream.Close()
 
-	reader := batch.New(stream, deps.Config.BatchSize)
-
 	if found && existing.Status == domain.FileStatusReading {
 		if deps.Logger != nil {
 			deps.Logger.Info("resuming in-progress file",
 				"file_id", fileID, "current_line", existing.CurrentLine)
 		}
-		return resume(ctx, fileID, priority, existing, reader, deps)
+		return resume(ctx, fileID, existing, batch.New(stream, deps.Config.BatchSize), deps)
 	}
-	return startFresh(ctx, fileID, priority, reader, deps)
+	return startFresh(ctx, fileID, priority, stream, deps)
 }
 
-func startFresh(ctx context.Context, fileID string, priority int, reader *batch.Reader, deps Deps) (Stats, error) {
-	window := make([]domain.RawLine, 0, regexselect.WindowSize)
-	var pending []domain.RawLine
-	for len(window) < regexselect.WindowSize {
-		b, done, err := reader.NextBatch(ctx)
-		if err != nil {
-			return Stats{}, fmt.Errorf("pipeline: reading selection window: %w", err)
-		}
-		window = append(window, b...)
-		if done {
-			break
-		}
-	}
-	if len(window) > regexselect.WindowSize {
-		pending = append(pending, window[regexselect.WindowSize:]...)
-		window = window[:regexselect.WindowSize]
-	}
-
+func startFresh(ctx context.Context, fileID string, priority int, stream io.Reader, deps Deps) (Stats, error) {
 	patterns, err := deps.Regexes.ActivePatterns(ctx)
 	if err != nil {
 		return Stats{}, fmt.Errorf("pipeline: loading active patterns: %w", err)
 	}
-	selection, err := regexselect.Select(ctx, deps.Logger, patterns, window)
-	if err != nil {
-		return Stats{}, fmt.Errorf("pipeline: selecting regex: %w", err)
+
+	// A seekable source can replay the selection window directly. For a
+	// streaming-only source, capture every byte read, including scanner read-ahead.
+	input := stream
+	replay := stream
+	rewind, seekable := stream.(io.Seeker)
+	var startOffset int64
+	if seekable {
+		startOffset, err = rewind.Seek(0, io.SeekCurrent)
+		seekable = err == nil
 	}
+	if !seekable {
+		spool, err := os.CreateTemp("", "reader-regex-window-*")
+		if err != nil {
+			return Stats{}, fmt.Errorf("pipeline: opening selection spool: %w", err)
+		}
+		defer func() {
+			spool.Close()
+			if err := os.Remove(spool.Name()); err != nil && deps.Logger != nil {
+				deps.Logger.Warn("could not remove selection spool", "error", err)
+			}
+		}()
+		input = io.TeeReader(stream, spool)
+		replay = io.MultiReader(spool, stream)
+		rewind = spool
+		startOffset = 0
+	}
+
+	selector := regexselect.New(deps.Logger, patterns)
+	sample := batch.New(input, deps.Config.BatchSize)
+	for i := 0; i < regexselect.WindowSize; i++ {
+		line, ok, err := sample.NextLine(ctx)
+		if err != nil {
+			return Stats{}, fmt.Errorf("pipeline: reading selection window: %w", err)
+		}
+		if !ok {
+			break
+		}
+		selector.Observe(line)
+	}
+	if err := sample.Err(); err != nil {
+		return Stats{}, fmt.Errorf("pipeline: reading selection window: %w", err)
+	}
+	selection := selector.Result()
 
 	now := time.Now().UTC()
 
@@ -108,6 +131,10 @@ func startFresh(ctx context.Context, fileID string, priority int, reader *batch.
 			deps.Logger.Info("no regex matched file; marking done", "file_id", fileID)
 		}
 		return Stats{}, nil
+	}
+
+	if _, err := rewind.Seek(startOffset, io.SeekStart); err != nil {
+		return Stats{}, fmt.Errorf("pipeline: rewinding selection window: %w", err)
 	}
 
 	compiled, err := regexengine.Compile(selection.Pattern.Pattern)
@@ -134,7 +161,7 @@ func startFresh(ctx context.Context, fileID string, priority int, reader *batch.
 	}
 
 	selectedPattern := selection.Pattern
-	stats, err := rs.drain(ctx, append(window, pending...), reader)
+	stats, err := rs.drain(ctx, batch.New(replay, deps.Config.BatchSize))
 	if err != nil {
 		return Stats{}, err
 	}
@@ -143,7 +170,7 @@ func startFresh(ctx context.Context, fileID string, priority int, reader *batch.
 }
 
 // resume continues a file whose FileState shows Status = reading.
-func resume(ctx context.Context, fileID string, priority int, existing domain.FileState, reader *batch.Reader, deps Deps) (Stats, error) {
+func resume(ctx context.Context, fileID string, existing domain.FileState, reader *batch.Reader, deps Deps) (Stats, error) {
 	if existing.SelectedRegexID == nil {
 		return Stats{}, fmt.Errorf("pipeline: resume: file %q has status reading but no SelectedRegexID recorded", fileID)
 	}
@@ -170,17 +197,9 @@ func resume(ctx context.Context, fileID string, priority int, existing domain.Fi
 		return Stats{}, fmt.Errorf("pipeline: resume: recompiling pattern %d: %w", selected.ID, err)
 	}
 
-
-	var discarded int64
-	for discarded < existing.CurrentLine {
-		b, done, err := reader.NextBatch(ctx)
-		if err != nil {
-			return Stats{}, fmt.Errorf("pipeline: resume: discarding already-processed lines: %w", err)
-		}
-		discarded += int64(len(b))
-		if done {
-			break
-		}
+	discarded, err := reader.Skip(ctx, existing.CurrentLine)
+	if err != nil {
+		return Stats{}, fmt.Errorf("pipeline: resume: discarding already-processed lines: %w", err)
 	}
 	if discarded < existing.CurrentLine {
 		return Stats{}, fmt.Errorf(
@@ -189,14 +208,14 @@ func resume(ctx context.Context, fileID string, priority int, existing domain.Fi
 	}
 
 	rs := &runState{
-		fileID: fileID, priority: priority, selectedID: selected.ID,
-		compiled: compiled, dedup: uniqueurl.New(priority),
+		fileID: fileID, priority: existing.Priority, selectedID: selected.ID,
+		compiled: compiled, dedup: uniqueurl.New(existing.Priority),
 		createdAt: existing.CreatedAt, deps: deps,
 	}
 	rs.lastLine = existing.CurrentLine
 	rs.stats.MatchedCount = existing.MatchedCount
 
-	stats, err := rs.drain(ctx, nil, reader)
+	stats, err := rs.drain(ctx, reader)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -204,7 +223,6 @@ func resume(ctx context.Context, fileID string, priority int, existing domain.Fi
 	stats.Resumed = true
 	return stats, nil
 }
-
 
 type runState struct {
 	fileID     string
@@ -219,27 +237,12 @@ type runState struct {
 	lastLine int64
 }
 
-
-func (r *runState) drain(ctx context.Context, firstBatch []domain.RawLine, reader *batch.Reader) (Stats, error) {
-	// firstBatch is the buffered regex-selection window on a fresh
-	// start, which can be much larger than BatchSize. Split it into
-	// real batches so checkpointing remains batch-granular and a crash
-	// here resumes from the last completed batch, not the file start.
-	if len(firstBatch) > 0 {
-		batchSize := r.deps.Config.BatchSize
-		if batchSize <= 0 {
-			batchSize = len(firstBatch)
+func (r *runState) drain(ctx context.Context, reader *batch.Reader) (Stats, error) {
+	defer func() {
+		if err := r.dedup.Close(); err != nil && r.deps.Logger != nil {
+			r.deps.Logger.Warn("could not remove URL index", "error", err)
 		}
-		for start := 0; start < len(firstBatch); start += batchSize {
-			end := start + batchSize
-			if end > len(firstBatch) {
-				end = len(firstBatch)
-			}
-			if err := r.processBatch(ctx, firstBatch[start:end]); err != nil {
-				return Stats{}, err
-			}
-		}
-	}
+	}()
 
 	for {
 		b, done, err := reader.NextBatch(ctx)
@@ -321,7 +324,11 @@ func (r *runState) processLine(ctx context.Context, line domain.RawLine) error {
 	}
 	r.stats.MatchedCount++
 
-	if msg, isNew := r.dedup.Offer(normalized.URL, normalized.Domain, normalized.Subdomain, normalized.Suffix); isNew {
+	msg, isNew, err := r.dedup.Offer(normalized.URL, normalized.Domain, normalized.Subdomain, normalized.Suffix)
+	if err != nil {
+		return fmt.Errorf("indexing unique url for line %d: %w", line.LineNumber, err)
+	}
+	if isNew {
 		if err := r.deps.Publisher.PublishUniqueURL(ctx, msg); err != nil {
 			return fmt.Errorf("publishing unique url for line %d: %w", line.LineNumber, err)
 		}

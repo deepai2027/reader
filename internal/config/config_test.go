@@ -110,3 +110,27 @@ func TestLoad_AggregatesMultipleErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_BatchSizeBounds(t *testing.T) {
+	for _, tt := range []struct {
+		value string
+		valid bool
+	}{
+		{"0", false},
+		{"1", true},
+		{"1000", true},
+		{"1001", false},
+	} {
+		t.Run(tt.value, func(t *testing.T) {
+			env := validEnv()
+			env["BATCH_SIZE"] = tt.value
+			_, err := load(lookupFromMap(env))
+			if tt.valid && err != nil {
+				t.Fatal(err)
+			}
+			if !tt.valid && (err == nil || !strings.Contains(err.Error(), "BATCH_SIZE")) {
+				t.Fatalf("wanted BATCH_SIZE error, got %v", err)
+			}
+		})
+	}
+}

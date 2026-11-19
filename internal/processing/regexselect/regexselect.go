@@ -15,14 +15,18 @@ type Result struct {
 	Matched bool
 }
 
+type candidate struct {
+	pattern  domain.RegexPattern
+	compiled *regexengine.Pattern
+	count    int
+}
 
-func Select(_ context.Context, logger *slog.Logger, patterns []domain.RegexPattern, lines []domain.RawLine) (Result, error) {
-	type candidate struct {
-		pattern  domain.RegexPattern
-		compiled *regexengine.Pattern
-		count    int
-	}
+// Selector accumulates match counts without retaining the sampled lines.
+type Selector struct {
+	candidates []candidate
+}
 
+func New(logger *slog.Logger, patterns []domain.RegexPattern) *Selector {
 	candidates := make([]candidate, 0, len(patterns))
 	for _, p := range patterns {
 		if !p.IsActive {
@@ -38,33 +42,40 @@ func Select(_ context.Context, logger *slog.Logger, patterns []domain.RegexPatte
 		}
 		candidates = append(candidates, candidate{pattern: p, compiled: compiled})
 	}
+	return &Selector{candidates: candidates}
+}
 
-	for i := range candidates {
-		for _, line := range lines {
-			if candidates[i].compiled.MatchString(line.Text) {
-				candidates[i].count++
-			}
+func (s *Selector) Observe(line string) {
+	for i := range s.candidates {
+		c := &s.candidates[i]
+		if c.compiled.MatchString(line) {
+			c.count++
 		}
 	}
+}
 
+func (s *Selector) Result() Result {
 	var best *candidate
-	for i := range candidates {
-		c := &candidates[i]
-		if c.count == 0 {
-			continue
-		}
-		switch {
-		case best == nil:
-			best = c
-		case c.count > best.count:
-			best = c
-		case c.count == best.count && c.pattern.ID < best.pattern.ID:
+	for i := range s.candidates {
+		c := &s.candidates[i]
+		if c.count > 0 && (best == nil || c.count > best.count ||
+			(c.count == best.count && c.pattern.ID < best.pattern.ID)) {
 			best = c
 		}
 	}
-
 	if best == nil {
-		return Result{Matched: false}, nil
+		return Result{}
 	}
-	return Result{Pattern: best.pattern, Matched: true}, nil
+	return Result{Pattern: best.pattern, Matched: true}
+}
+
+func Select(ctx context.Context, logger *slog.Logger, patterns []domain.RegexPattern, lines []domain.RawLine) (Result, error) {
+	selector := New(logger, patterns)
+	for _, line := range lines {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		selector.Observe(line.Text)
+	}
+	return selector.Result(), nil
 }

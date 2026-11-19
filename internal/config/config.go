@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const maxBatchSize = 1000
+
 // Config holds Reader's core-pipeline configuration.
 type Config struct {
 	// BatchSize is the number of lines read and processed per batch
@@ -59,6 +61,8 @@ func load(lookup envLookup) (Config, error) {
 
 	if cfg.BatchSize <= 0 {
 		errs = append(errs, "BATCH_SIZE must be a positive integer")
+	} else if cfg.BatchSize > maxBatchSize {
+		errs = append(errs, fmt.Sprintf("BATCH_SIZE must be at most %d", maxBatchSize))
 	}
 	if cfg.MinUsernameLength < 0 || cfg.MaxUsernameLength < cfg.MinUsernameLength {
 		errs = append(errs, "MIN_USERNAME_LENGTH/MAX_USERNAME_LENGTH must satisfy 0 <= min <= max")
