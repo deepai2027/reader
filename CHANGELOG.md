@@ -8,6 +8,25 @@ minor versions as the architecture settles.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-19
+
+### Added
+
+- Added reproducible multi-GiB pipeline and regex benchmarks. On the 3 GiB
+  distinct-URL fixture at batch size 500, peak memory dropped from 512 MiB
+  to 39 MiB while median throughput held at about 221 MiB/s.
+
+### Changed
+
+- Bounded memory during regex selection, batch reading, and per-run URL
+  deduplication. Large URL indexes spill to temporary disk storage.
+- Kept the example `BATCH_SIZE` at 500 and enforced a range of 1–1,000.
+
+### Fixed
+
+- Resume now starts at the exact saved checkpoint even when the batch size
+  changes, and it keeps the original file priority.
+
 ## [0.2.1] - 2026-11-19
 
 ### Added
