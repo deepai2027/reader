@@ -279,7 +279,7 @@ Step F is complete. Step G remains open.
   RabbitMQ connection) to confirm retry/backoff/ack behavior designed
   against the local stub holds against the real client library.
 
-### Final Phase / Step E — Reader Status API
+### Final Phase / Step E — Reader Status API ✅ Complete (merged 2026-11-19)
 
 - `POST /status` via `net/http.ServeMux`, API-key middleware, request/
   response shapes per README §11.
