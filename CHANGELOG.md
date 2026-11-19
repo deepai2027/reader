@@ -8,6 +8,17 @@ minor versions as the architecture settles.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-19
+
+### Added
+
+- Agent mode now runs scheduled Log Rotation. Completed files become
+  eligible one calendar month after registration in UTC. Configure the
+  schedule with `LOG_ROTATION_INTERVAL`, which defaults to `24h`.
+- Log Rotation protects active and resumable files, retains PostgreSQL
+  records until MinIO confirms object deletion or absence, and retries
+  failed cleanup on later runs.
+
 ## [0.2.2] - 2026-11-19
 
 ### Added
