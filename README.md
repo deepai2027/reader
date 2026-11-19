@@ -447,7 +447,9 @@ The Agent sends one or more file identifiers, and the Reader retrieves their pro
 
 ### 11.1. API Authentication
 
-The status API must be protected using an API Key.
+The Agent calls `POST /status` with the Reader key in the `X-API-Key` header. Set `READER_API_KEY` in the Reader environment or local `.env`. The outbound `AGENT_API_KEY` is configured separately.
+
+The endpoint runs in `-mode=agent` and listens on `READER_API_ADDR` (default `:8080`). Docker Compose runs the Reader in agent mode and publishes port 8080. An Agent outside Compose uses `http://<reader-host>:8080/status`. An Agent on the same Docker network uses `http://reader:8080/status`.
 
 Requirements:
 
@@ -460,6 +462,8 @@ Requirements:
 The API must accept an array of file identifiers (`file_id`).
 
 The Agent must send all requested file identifiers in a single JSON request.
+
+Send 1 to 500 identifiers and keep the JSON request body at or below 64 KiB. Malformed requests or invalid identifiers return HTTP 400. Bodies larger than 64 KiB return HTTP 413.
 
 #### Example Request
 
@@ -508,7 +512,7 @@ The API must return a JSON response containing an array of file processing infor
 
 | Field | Description |
 |---|---|
-| `files` | Array containing information about all requested files. |
+| `files` | Array containing known files in request order, with duplicate IDs included once. Unknown IDs are omitted. If none are known, the array is empty. |
 | `file_id` | File identifier. |
 | `state` | File processing status: `reading` or `done`. |
 | `lines_read` | Number of lines read from the file. |
@@ -603,6 +607,7 @@ AGENT_POLLING_INTERVAL=
 
 # Reader API Configuration
 READER_API_KEY=
+READER_API_ADDR=:8080
 
 # PostgreSQL Configuration
 DB_HOST=

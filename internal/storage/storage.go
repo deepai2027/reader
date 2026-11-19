@@ -82,6 +82,32 @@ func (s *ProgressStore) FindReading(ctx context.Context) (domain.FileState, bool
 	return state, true, nil
 }
 
+// LookupStatuses reads the checkpoint fields exposed by the Status API.
+func (s *ProgressStore) LookupStatuses(ctx context.Context, fileIDs []string) (map[string]domain.FileState, error) {
+	const query = `
+		SELECT file_id, status, current_line, matched_count
+		FROM file_management WHERE file_id = ANY($1::text[])`
+
+	rows, err := s.db.QueryContext(ctx, query, fileIDs)
+	if err != nil {
+		return nil, fmt.Errorf("storage: querying file statuses: %w", err)
+	}
+	defer rows.Close()
+
+	states := make(map[string]domain.FileState, len(fileIDs))
+	for rows.Next() {
+		var state domain.FileState
+		if err := rows.Scan(&state.FileID, &state.Status, &state.CurrentLine, &state.MatchedCount); err != nil {
+			return nil, fmt.Errorf("storage: scanning file status: %w", err)
+		}
+		states[state.FileID] = state
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: iterating file statuses: %w", err)
+	}
+	return states, nil
+}
+
 // RegexSource is the PostgreSQL-backed ports.RegexSource adapter,
 // replacing the Phase 0 stub's hardcoded single pattern.
 type RegexSource struct {

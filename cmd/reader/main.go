@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,6 +29,7 @@ import (
 	"github.com/yourorg/reader/internal/ports/stub"
 	"github.com/yourorg/reader/internal/processing/pipeline"
 	"github.com/yourorg/reader/internal/rabbitmq"
+	"github.com/yourorg/reader/internal/statusapi"
 	"github.com/yourorg/reader/internal/storage"
 )
 
@@ -51,7 +55,10 @@ func main() {
 
 	switch *mode {
 	case "agent":
-		runAgentMode(logger, cfg)
+		if err := runAgentMode(logger, cfg); err != nil {
+			logger.Error("agent mode failed", "error", err)
+			os.Exit(1)
+		}
 	default:
 		runManualMode(logger, cfg, *filePath)
 	}
@@ -86,18 +93,15 @@ func runManualMode(logger *slog.Logger, cfg config.Config, filePath string) {
 	)
 }
 
-
-func runAgentMode(logger *slog.Logger, cfg config.Config) {
+func runAgentMode(logger *slog.Logger, cfg config.Config) error {
 	infra, err := config.LoadInfra()
 	if err != nil {
-		logger.Error("failed to load infrastructure configuration", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("loading infrastructure configuration: %w", err)
 	}
 
 	db, err := sql.Open("pgx", infra.DatabaseDSN)
 	if err != nil {
-		logger.Error("failed to open database connection", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("opening database connection: %w", err)
 	}
 	defer db.Close()
 
@@ -106,21 +110,18 @@ func runAgentMode(logger *slog.Logger, cfg config.Config) {
 		Secure: infra.MinIOUseSSL,
 	})
 	if err != nil {
-		logger.Error("failed to create minio client", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("creating MinIO client: %w", err)
 	}
 
 	amqpConn, err := amqp.Dial(infra.RabbitMQURL)
 	if err != nil {
-		logger.Error("failed to connect to rabbitmq", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("connecting to RabbitMQ: %w", err)
 	}
 	defer amqpConn.Close()
 
 	amqpChannel, err := amqpConn.Channel()
 	if err != nil {
-		logger.Error("failed to open rabbitmq channel", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("opening RabbitMQ channel: %w", err)
 	}
 	defer amqpChannel.Close()
 
@@ -145,8 +146,37 @@ func runAgentMode(logger *slog.Logger, cfg config.Config) {
 		Logger:    logger,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, cancel := context.WithCancel(signalCtx)
+	defer cancel()
+
+	listener, err := net.Listen("tcp", infra.ReaderAPIAddr)
+	if err != nil {
+		return fmt.Errorf("binding Reader Status API: %w", err)
+	}
+	server := &http.Server{
+		Handler:           statusapi.New(progress, infra.ReaderAPIKey, logger),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+	}
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- server.Serve(listener)
+		cancel()
+	}()
+	defer func() {
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelShutdown()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("status API shutdown timed out", "error", err)
+			_ = server.Close()
+		}
+	}()
+	logger.Info("status API listening", "address", listener.Addr().String())
 
 	ticker := time.NewTicker(time.Duration(infra.AgentPollIntervalSeconds) * time.Second)
 	defer ticker.Stop()
@@ -156,8 +186,18 @@ func runAgentMode(logger *slog.Logger, cfg config.Config) {
 		select {
 		case <-ctx.Done():
 			logger.Info("shutting down")
-			return
+			select {
+			case err := <-serverDone:
+				if !errors.Is(err, http.ErrServerClosed) {
+					return fmt.Errorf("serving Reader Status API: %w", err)
+				}
+			default:
+			}
+			return nil
 		case <-ticker.C:
+			if ctx.Err() != nil {
+				continue
+			}
 			processed, err := orchestrate.PollOnce(ctx, agentClient, progress, logger, deps)
 			if err != nil {
 				logger.Error("poll cycle failed", "error", err)

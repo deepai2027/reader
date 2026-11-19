@@ -129,6 +129,9 @@ type InfraConfig struct {
 	AgentBaseURL             string
 	AgentAPIKey              string
 	AgentPollIntervalSeconds int
+
+	ReaderAPIKey  string
+	ReaderAPIAddr string
 }
 
 // LoadInfra reads and validates InfraConfig from the process
@@ -157,6 +160,9 @@ func loadInfra(lookup envLookup) (InfraConfig, error) {
 		AgentBaseURL:             mustString(lookup, "AGENT_BASE_URL", &errs),
 		AgentAPIKey:              mustString(lookup, "AGENT_API_KEY", &errs),
 		AgentPollIntervalSeconds: mustInt(lookup, "AGENT_POLL_INTERVAL_SECONDS", &errs),
+
+		ReaderAPIKey:  mustString(lookup, "READER_API_KEY", &errs),
+		ReaderAPIAddr: stringOrDefault(lookup, "READER_API_ADDR", ":8080"),
 	}
 
 	if cfg.AgentPollIntervalSeconds <= 0 {

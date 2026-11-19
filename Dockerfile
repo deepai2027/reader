@@ -1,5 +1,5 @@
 # Multi-stage build per specs/tech-stack.md.
-FROM golang:1.22 AS builder
+FROM golang:1.26 AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

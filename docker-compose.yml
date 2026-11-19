@@ -10,18 +10,22 @@ services:
       POSTGRES_PASSWORD: reader
       POSTGRES_DB: reader
     ports:
-      - "15433:15433"
+      - "15433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
   reader:
     build: .
+    command: ["-mode=agent"]
     depends_on:
       - postgres
     env_file:
       - .env
     environment:
-      DATABASE_DSN: postgres://reader:reader@postgres:15433/reader?sslmode=disable
+      DATABASE_DSN: postgres://reader:reader@postgres:5432/reader?sslmode=disable
+      READER_API_ADDR: ":8080"
+    ports:
+      - "8080:8080"
 
 volumes:
   postgres-data:

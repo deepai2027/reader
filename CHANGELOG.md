@@ -37,6 +37,11 @@ status notes.
 
 ### Added
 
+- Reader Status API (Final Phase Step E). The Agent can use authenticated
+  `POST /status` requests to look up committed processing counts for
+  multiple files in PostgreSQL. Agent mode serves the endpoint on port
+  8080 by default. See `specs/2026-11-19-reader-status-api/` for the
+  contract and validation results.
 - Checkpointing after every batch and crash-recovery/resume
   (`internal/processing/pipeline`), proven by fault-injection tests.
 - Reliable delivery: a retrying publisher wrapper with transient/
@@ -60,8 +65,9 @@ status notes.
 - A batch that fails partway through is fully reprocessed on resume,
   which can re-publish already-succeeded records within that batch
   (downstream `record_hash` dedup is the intended safety net).
-- Status API, Log Rotation, and Phase 3 performance hardening are not
-  included.
+- Log Rotation and Phase 3 performance hardening remain open.
+- Live Agent compatibility with the Status API and Docker Compose
+  startup and shutdown still need deployment verification.
 - The Agent, RabbitMQ topic, and MinIO wiring have not been run
   against real instances in the environment that wrote them - no Go
   toolchain or network access there. `test/integration/mvp_test.go`
