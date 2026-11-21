@@ -8,6 +8,29 @@ minor versions as the architecture settles.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-20
+
+### Added
+
+- Added end-to-end coverage for Reader startup, checkpoint recovery,
+  RabbitMQ delivery, and the Status API. CI now runs the Docker Compose
+  smoke test.
+
+### Changed
+
+- Agent mode applies PostgreSQL migrations at startup and retains its
+  local working copy until processing completes.
+- RabbitMQ delivery waits for broker confirmation, retries failures,
+  and sets the AMQP priority on Unique URL messages.
+
+### Fixed
+
+- Reader resumes the saved PostgreSQL checkpoint before polling the Agent
+  for new work. Concurrent Reader instances share a PostgreSQL polling lock.
+- Resumed processing suppresses Unique URL messages from committed lines.
+  Full Record messages use the documented JSON fields and include the
+  source object's modification time.
+
 ## [0.2.3] - 2026-11-19
 
 ### Added
