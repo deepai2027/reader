@@ -21,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version-file: go.mod
           cache: true
 
       - name: Build
@@ -32,15 +32,13 @@ jobs:
 
       - name: Test
         run: make test
+      - name: Race test
+        run: go test -race ./...
 
   integration-test:
     runs-on: ubuntu-latest
     # Docker is available by default on GitHub-hosted ubuntu runners,
     # which testcontainers-go needs to spin up Postgres/RabbitMQ/MinIO.
-    # This is the first job in this project's CI that uses service
-    # containers at all (specs/2026-11-10-mvp/requirements.md
-    # Decision 6) - unverified in this phase, see
-    # test/integration/mvp_test.go's own warning comment.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,8 +46,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version-file: go.mod
           cache: true
 
       - name: Integration test
         run: make test-integration
+        env:
+          READER_TEST_COMPOSE: "1"

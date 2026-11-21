@@ -225,14 +225,10 @@ Per the key requirement, **this is where Agent integration, MinIO
 downloading, database implementation, and API development happen — not
 before.**
 
-**Status:** Steps A–D are implemented and merged via the `mvp` branch
-(2026-11-17); see `specs/2026-11-10-mvp/`. Build, vet, and unit tests
-pass, but the Docker-backed integration suite did not complete in this
-environment (testcontainers image pull timed out), so the
-real-infrastructure adapters are merged but still unverified end-to-end.
-Step E is implemented and has passed PostgreSQL integration testing. Live
-Agent interoperability and the Docker Compose smoke check remain open.
-Step F is complete. Step G remains open.
+**Status:** Steps A–G are complete. Step G verified the workflow with an
+HTTP Agent stub and disposable PostgreSQL, MinIO, and RabbitMQ instances.
+Docker-backed integration, the Docker Compose smoke check, and live Agent
+interoperability remain open as validation follow-ups.
 
 ### Final Phase / Step A — PostgreSQL Persistence ✅ Complete (merged 2026-11-17)
 
@@ -296,13 +292,17 @@ Step F is complete. Step G remains open.
   local scheduled-run deployment smoke test passed. See
   [Step F validation](2026-11-19-log-rotation/validation.md).
 
-### Final Phase / Step G — End-to-End Hardening
+### Final Phase / Step G — End-to-End Hardening ✅ Complete (2026-11-20)
 
-- Full real-infrastructure end-to-end test: Agent stub → MinIO → Reader →
-  PostgreSQL → RabbitMQ → Status API, covering the complete README §14
-  workflow with real services.
-- Close any remaining gaps against the full README §17 test checklist.
-- Finalize `.env.example`, Docker Compose, and run documentation.
+The [Step G validation report](2026-11-19-end-to-end-hardening/validation.md)
+records the real-service workflow and recovery checks. The Docker-backed
+integration and Compose smoke gates remain open.
+
+- Verified Reader's workflow and restart recovery with an HTTP Agent stub,
+  PostgreSQL, MinIO, RabbitMQ, and the Status API.
+- Mapped the README §17 checks to the unit, integration, and workflow suites.
+- Updated `.env.example`, Docker Compose, and the run documentation.
+  CI runs the Docker-backed suites and Compose smoke check.
 
 **Exit criteria (Final Phase as a whole):** Every architectural
 requirement in README §15 and every guarantee in README §16 is true

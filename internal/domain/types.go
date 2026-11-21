@@ -6,7 +6,7 @@ type FileStatus string
 
 const (
 	FileStatusReading FileStatus = "reading"
-	FileStatusDone FileStatus = "done"
+	FileStatusDone    FileStatus = "done"
 )
 
 type FileState struct {
@@ -39,24 +39,23 @@ type ExtractedCandidate struct {
 	Password   string
 }
 
-
 type ValidatedRecord struct {
-	RecordHash   string
-	Username     string
-	Password     string
-	URL          string // normalized
-	Domain       string
-	Subdomain    string // empty if none
-	Suffix       string
-	Port         string // empty if none
-	ModifiedDate time.Time // file's last-modified time, from MinIO metadata
-	CreatedAt    time.Time
+	RecordHash   string    `json:"record_hash"`
+	Username     string    `json:"username"`
+	Password     string    `json:"password"`
+	URL          string    `json:"url"`
+	Domain       string    `json:"domain"`
+	Subdomain    string    `json:"subdomain"`
+	Suffix       string    `json:"suffix"`
+	Port         string    `json:"port"`
+	ModifiedDate time.Time `json:"modified_date"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type UniqueURLMessage struct {
-	URL       string // normalized
-	Priority  int    // inherited from the source file
-	Domain    string
-	Subdomain string
-	Suffix    string
+	URL       string `json:"url"`
+	Priority  int    `json:"priority"`
+	Domain    string `json:"domain"`
+	Subdomain string `json:"subdomain"`
+	Suffix    string `json:"suffix"`
 }

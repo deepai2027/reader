@@ -197,14 +197,7 @@ func TestRun_AlreadyDoneFileIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestRun_UniqueURLDedupNotPreservedAcrossRestart_KnownGap documents,
-// rather than hides, a known MVP limitation (plan.md Group 2): Dedup
-// state is in-memory and file-scoped, so a restart can re-emit a
-// unique-URL message for a URL already emitted before the crash. If
-// this test starts failing because dedup state became persisted,
-// that's progress - update the spec to reflect the gap closing rather
-// than "fixing" this test to hide it again.
-func TestRun_UniqueURLDedupNotPreservedAcrossRestart_KnownGap(t *testing.T) {
+func TestRun_RestoresCommittedURLDedupAcrossRestart(t *testing.T) {
 	progress := stub.NewProgressStore()
 	crasher := &crashAfterNPublisher{n: 1} // crash after line 1 ("dup.example.com") fully publishes
 	deps := recoveryTestDeps(crasher, progress)
@@ -217,18 +210,9 @@ func TestRun_UniqueURLDedupNotPreservedAcrossRestart_KnownGap(t *testing.T) {
 		t.Fatalf("unexpected error on resume: %v", err)
 	}
 
-	// duplicate_urls.txt's first two lines share the URL
-	// https://dup.example.com. Line 1 published (and deduped as "new")
-	// before the crash; resume continues at line 2, whose URL is the
-	// same - but the resumed run's Dedup has never seen it, so it is
-	// re-emitted as "new" again.
-	foundDupAgain := false
 	for _, m := range finisher.unique {
 		if m.URL == "https://dup.example.com" {
-			foundDupAgain = true
+			t.Fatal("resume published a URL already delivered from a committed line")
 		}
-	}
-	if !foundDupAgain {
-		t.Fatal("expected the known dedup-not-preserved gap to reproduce; if it no longer does, the gap may have been fixed - update the spec, not this test")
 	}
 }

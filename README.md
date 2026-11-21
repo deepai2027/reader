@@ -660,6 +660,25 @@ LOG_ROTATION_INTERVAL=24h
 
 ---
 
+### 13.3. Running Reader in Agent mode
+
+Copy `.env.example` to `.env` and set the PostgreSQL DSN, MinIO bucket and credentials, RabbitMQ URL and queue names, Agent URL and key, and a Reader Status API key. The PostgreSQL database must exist. Reader applies its embedded migrations on startup in Agent mode. Give the database account permission to create and update the Reader schema.
+
+Provision the MinIO bucket and both RabbitMQ queues before starting Reader. Use durable queues and set `x-max-priority` on the Unique URL queue to the highest priority the Agent assigns. Agent priorities must fit the AMQP range of 0–255. Reader waits for broker confirmation and treats an unroutable message as a failed delivery.
+
+Run `go run ./cmd/reader -mode=agent` for a host deployment. Use `READER_WORK_DIR` to select a writable directory with space for the largest input and processing scratch files. Keep the volume across restarts to reuse completed downloads. Use a separate working directory for each independent deployment.
+
+For Compose, configure the Agent, MinIO, and RabbitMQ endpoints as seen **from the Reader container**. Use reachable DNS names. If those services run on the Docker Desktop host, use `host.docker.internal` with their host ports. Compose supplies the internal PostgreSQL DSN, waits for PostgreSQL health, and keeps the download directory on the `reader-work` volume.
+
+```sh
+docker compose config --services
+docker compose up --build -d
+docker compose ps
+docker compose logs reader
+```
+
+The service list should contain `postgres` and `reader`. The default published ports are 15433 for PostgreSQL and 8080 for Reader. Override them with `READER_POSTGRES_PORT` and `READER_HTTP_PORT`. Set `READER_ENV_FILE` to select another application env file. Use `docker compose down` to stop the services while retaining their volumes.
+
 ## 14. Overall Processing Workflow
 
 The complete Reader workflow is described below:
@@ -799,3 +818,17 @@ Tests must verify the main processing workflows and important failure scenarios,
 - The test suite must be runnable through documented Go test commands.
 
 **Important:** The project's Docker Compose configuration must continue to start only the Reader and PostgreSQL containers. RabbitMQ and MinIO used by integration tests must be provided through separately managed test infrastructure or suitable test doubles; they must not be added to the project's standard Docker Compose services.
+
+### 17.5. Running the checks
+
+Run `go build ./...`, `go vet ./...`, `go test ./...`, and `go test -race ./...` with the Go version in `go.mod`. The race detector requires CGO and a supported C toolchain.
+
+Use a local Docker engine that can pull Linux images, then run `make test-integration` or `go test -tags=integration -count=1 -v ./test/...`. The tagged suites start disposable PostgreSQL, MinIO, and RabbitMQ instances with Testcontainers. The workflow suite starts the real Reader binary and controls assignments with an HTTP Agent stub. Set `READER_TEST_COMPOSE=1` in the test runner's environment to include the Compose smoke test. That test requires the Docker Compose plugin and local Docker networking with host-gateway support. It creates a uniquely named Compose project, uses temporary credentials and dynamic host ports, and tears down its project and volumes.
+
+For dedicated external test services, set all five workflow overrides together:
+
+- `READER_WORKFLOW_TEST_DATABASE_DSN` for an empty database.
+- `READER_WORKFLOW_TEST_RABBITMQ_URL` for an empty isolated vhost.
+- `READER_WORKFLOW_TEST_MINIO_ENDPOINT`, `READER_WORKFLOW_TEST_MINIO_ACCESS_KEY`, and `READER_WORKFLOW_TEST_MINIO_SECRET_KEY` for an isolated MinIO instance with no `reader-files` bucket. The test creates that bucket.
+
+The adapter suites also accept `READER_STATUS_TEST_DATABASE_DSN` and `READER_ROTATION_TEST_DATABASE_DSN` for separate empty databases. For external MinIO retention testing, set `READER_ROTATION_TEST_MINIO_ENDPOINT`, `READER_ROTATION_TEST_MINIO_ACCESS_KEY`, `READER_ROTATION_TEST_MINIO_SECRET_KEY`, `READER_ROTATION_TEST_MINIO_BUCKET` for an existing empty bucket, and `READER_ROTATION_TEST_MINIO_USE_SSL=true` if needed. Discard the isolated test resources after each run.

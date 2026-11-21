@@ -10,22 +10,32 @@ services:
       POSTGRES_PASSWORD: reader
       POSTGRES_DB: reader
     ports:
-      - "15433:5432"
+      - "${READER_POSTGRES_PORT:-15433}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U reader -d reader"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
 
   reader:
     build: .
     command: ["-mode=agent"]
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     env_file:
-      - .env
+      - ${READER_ENV_FILE:-.env}
     environment:
       DATABASE_DSN: postgres://reader:reader@postgres:5432/reader?sslmode=disable
       READER_API_ADDR: ":8080"
+      READER_WORK_DIR: /work
+    volumes:
+      - reader-work:/work
     ports:
-      - "8080:8080"
+      - "${READER_HTTP_PORT:-8080}:8080"
 
 volumes:
   postgres-data:
+  reader-work:

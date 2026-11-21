@@ -1,4 +1,4 @@
-.PHONY: build vet test test-integration run fmt
+.PHONY: build vet test test-integration run run-agent fmt
 
 build:
 	go build -buildvcs=false -o bin/reader ./cmd/reader
@@ -10,7 +10,7 @@ test:
 	go test ./...
 
 test-integration:
-	go test -tags=integration ./test/integration/...
+	go test -tags=integration -count=1 -v ./test/...
 
 fmt:
 	gofmt -l .

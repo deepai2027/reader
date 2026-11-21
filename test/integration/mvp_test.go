@@ -1,130 +1,71 @@
 //go:build integration
 
-// Package integration holds the MVP's full real-infrastructure
-// end-to-end test (specs/2026-11-10-mvp/plan.md Group 9). It is built
-// with the "integration" tag so `go test ./...` (no tag) never needs
-// Docker, matching specs/2026-11-10-mvp/validation.md section 1.
-//
-// WARNING - read before trusting this file: it was written with no Go
-// toolchain, no network access, and no way to run it, combining four
-// testcontainers-go module APIs (postgres, rabbitmq, minio) and
-// golang-migrate at once. Every other new adapter in this phase
-// (internal/storage, internal/objectstore, internal/rabbitmq,
-// internal/agent) has a unit test against a fake and was reviewed on
-// its own; this file has neither luxury - it is the single least-
-// verified piece of code in this entire phase. Expect to need to fix
-// API mismatches here (container module function names/signatures
-// drift between testcontainers-go versions) before it runs at all.
 package integration
 
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	migratepg "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	amqp "github.com/rabbitmq/amqp091-go"
-	miniocontainer "github.com/testcontainers/testcontainers-go/modules/minio"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/modules/rabbitmq"
 
-	readeragent "github.com/yourorg/reader/internal/agent"
-	"github.com/yourorg/reader/internal/config"
-	"github.com/yourorg/reader/internal/delivery/local"
-	"github.com/yourorg/reader/internal/domain"
-	"github.com/yourorg/reader/internal/objectstore"
-	"github.com/yourorg/reader/internal/orchestrate"
-	"github.com/yourorg/reader/internal/processing/pipeline"
-	readerrabbitmq "github.com/yourorg/reader/internal/rabbitmq"
 	"github.com/yourorg/reader/internal/storage"
+	"github.com/yourorg/reader/test/integrationinfra"
 )
 
 func TestMVP_EndToEnd_HappyPathAndCrashResume(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
 
-	// --- PostgreSQL ---
-	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
-		postgres.WithDatabase("reader"),
-		postgres.WithUsername("reader"),
-		postgres.WithPassword("reader"),
-	)
-	if err != nil {
-		t.Fatalf("starting postgres container: %v", err)
-	}
-	defer func() { _ = pgContainer.Terminate(ctx) }()
-
-	dsn, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("getting postgres connection string: %v", err)
-	}
-
+	services := integrationEndpoints(t, ctx)
+	dsn, rmqURL, minioEndpoint := services.dsn, services.broker, services.minio
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("opening db: %v", err)
+		t.Fatal(err)
 	}
 	defer db.Close()
 
-	if err := runMigrations(dsn); err != nil {
-		t.Fatalf("running migrations: %v", err)
-	}
-
-	// --- RabbitMQ ---
-	rmqContainer, err := rabbitmq.Run(ctx, "rabbitmq:3.13-management-alpine")
-	if err != nil {
-		t.Fatalf("starting rabbitmq container: %v", err)
-	}
-	defer func() { _ = rmqContainer.Terminate(ctx) }()
-
-	rmqURL, err := rmqContainer.AmqpURL(ctx)
-	if err != nil {
-		t.Fatalf("getting rabbitmq url: %v", err)
-	}
 	amqpConn, err := amqp.Dial(rmqURL)
 	if err != nil {
-		t.Fatalf("dialing rabbitmq: %v", err)
+		t.Fatal(err)
 	}
 	defer amqpConn.Close()
 	amqpChannel, err := amqpConn.Channel()
 	if err != nil {
-		t.Fatalf("opening rabbitmq channel: %v", err)
+		t.Fatal(err)
 	}
 	defer amqpChannel.Close()
+	t.Run("delivery retry and confirmation", func(t *testing.T) {
+		checkBrokerDelivery(t, ctx, rmqURL, amqpChannel)
+	})
 
 	const fullRecordQueue = "test.full_record"
 	const uniqueURLQueue = "test.unique_url"
-	for _, q := range []string{fullRecordQueue, uniqueURLQueue} {
-		if _, err := amqpChannel.QueueDeclare(q, true, false, false, false, nil); err != nil {
-			t.Fatalf("declaring queue %q: %v", q, err)
+	declareQueues := func() {
+		t.Helper()
+		for _, queue := range []string{fullRecordQueue, uniqueURLQueue} {
+			if _, err := amqpChannel.QueueDeclare(queue, true, false, false, false, amqp.Table{"x-max-priority": int32(10)}); err != nil {
+				t.Fatalf("declaring queue %q: %v", queue, err)
+			}
 		}
 	}
 
-	// --- MinIO ---
-	minioContainer, err := miniocontainer.Run(ctx, "minio/minio:RELEASE.2024-01-16T16-07-38Z")
-	if err != nil {
-		t.Fatalf("starting minio container: %v", err)
-	}
-	defer func() { _ = minioContainer.Terminate(ctx) }()
-
-	minioEndpoint, err := minioContainer.ConnectionString(ctx)
-	if err != nil {
-		t.Fatalf("getting minio endpoint: %v", err)
-	}
 	minioClient, err := minio.New(minioEndpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(minioContainer.Username, minioContainer.Password, ""),
-		Secure: false,
+		Creds: credentials.NewStaticV4(services.accessKey, services.secretKey, ""),
 	})
 	if err != nil {
-		t.Fatalf("creating minio client: %v", err)
+		t.Fatal(err)
 	}
 
 	const bucket = "reader-files"
@@ -132,87 +73,184 @@ func TestMVP_EndToEnd_HappyPathAndCrashResume(t *testing.T) {
 		t.Fatalf("creating bucket: %v", err)
 	}
 
-	const fileContent = "https://example.com:alice:password123\nhttp://test.org:bob:hunter2pass\n"
-	if _, err := minioClient.PutObject(ctx, bucket, "e2e-test-file.txt",
-		strings.NewReader(fileContent), int64(len(fileContent)), minio.PutObjectOptions{}); err != nil {
-		t.Fatalf("uploading test file: %v", err)
+	const fileID = "e2e-test-file.txt"
+	const noMatchID = "no-match.txt"
+	const fileContent = "https://EXAMPLE.com:alice:password123\ninvalid line\nhttp://test.org:bob:hunter2pass\n"
+	for id, content := range map[string]string{fileID: fileContent, noMatchID: "no matching records\n"} {
+		if _, err := minioClient.PutObject(ctx, bucket, id, strings.NewReader(content), int64(len(content)), minio.PutObjectOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// --- Fake Agent (httptest, per requirements.md Decision 5 - there is
-	// no real Agent to run in a container) ---
-	served := false
+	var polls atomic.Int32
+	allowNoMatch := make(chan struct{})
 	agentServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if served {
-			w.WriteHeader(http.StatusNoContent)
+		if r.Method != "POST" || r.URL.Path != "/api/reader/new_file/" || r.Header.Get("X-API-Key") != "test-agent-key" {
+			t.Error("invalid Agent poll")
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		served = true
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"file_id":"e2e-test-file.txt","priority":5}`)
+		switch polls.Add(1) {
+		case 1:
+			w.WriteHeader(http.StatusNoContent)
+		case 2:
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":"file_in_reading"}`)
+		case 3:
+			_, _ = io.WriteString(w, `{"file_id":"e2e-test-file.txt","priority":5}`)
+		default:
+			select {
+			case <-allowNoMatch:
+				_, _ = io.WriteString(w, `{"file_id":"no-match.txt","priority":7}`)
+			default:
+				w.WriteHeader(http.StatusNoContent)
+			}
+		}
 	}))
 	defer agentServer.Close()
 
-	// --- Wire real adapters ---
-	progress := storage.NewProgressStore(db)
-	regexes := storage.NewRegexSource(db)
-	files := objectstore.NewFileSource(minioClient, bucket)
-	rawPublisher := readerrabbitmq.NewPublisher(amqpChannel, readerrabbitmq.Topics{
-		FullRecord: fullRecordQueue,
-		UniqueURL:  uniqueURLQueue,
+	workDir := t.TempDir()
+	exe := buildReader(t)
+	settings := map[string]string{
+		"BATCH_SIZE": "1", "MIN_USERNAME_LENGTH": "1", "MAX_USERNAME_LENGTH": "50",
+		"MIN_PASSWORD_LENGTH": "1", "MAX_PASSWORD_LENGTH": "50",
+		"RETRY_MAX_ATTEMPTS": "3", "RETRY_BASE_DELAY_MS": "100", "LOG_LEVEL": "debug",
+		"DATABASE_DSN": dsn, "MINIO_ENDPOINT": minioEndpoint, "MINIO_BUCKET": bucket,
+		"MINIO_ACCESS_KEY": services.accessKey, "MINIO_SECRET_KEY": services.secretKey,
+		"MINIO_USE_SSL": "false", "RABBITMQ_URL": rmqURL, "RABBITMQ_FULL_RECORD_TOPIC": fullRecordQueue,
+		"RABBITMQ_UNIQUE_URL_TOPIC": uniqueURLQueue, "AGENT_BASE_URL": agentServer.URL,
+		"AGENT_API_KEY": "test-agent-key", "AGENT_POLL_INTERVAL_SECONDS": "1",
+		"READER_API_KEY": "test-status-key", "READER_API_ADDR": "127.0.0.1:0", "READER_WORK_DIR": workDir,
+		"LOG_ROTATION_INTERVAL": "24h",
+	}
+	// A second Reader can serve HTTP while ownership is held, but cannot poll.
+	release, err := storage.NewRotationStore(db).LockPolling(ctx)
+	if err != nil || release == nil {
+		t.Fatalf("reserving polling ownership: %v", err)
+	}
+	defer release()
+	contender := startReader(t, exe, settings)
+	eventually(t, func() bool {
+		return contender.pollingContended.Load()
 	})
-	publisher := local.New(rawPublisher, 3, 10)
-	agentClient := readeragent.New(&http.Client{Timeout: 5 * time.Second}, agentServer.URL, "test-key")
-
-	deps := pipeline.Deps{
-		Progress: progress, Publisher: publisher, Regexes: regexes, Files: files,
-		Config: config.Config{
-			BatchSize: 1, MinUsernameLength: 1, MaxUsernameLength: 50,
-			MinPasswordLength: 1, MaxPasswordLength: 50,
-			RetryMaxAttempts: 3, RetryBaseDelayMS: 10, LogLevel: "error",
-		},
+	if got := polls.Load(); got != 0 {
+		t.Fatalf("contending Reader called Agent %d times", got)
+	}
+	contender.stop(t)
+	// Seed a checkpoint failure after the second valid line has already been
+	// delivered. Restart must replay that batch and skip the committed lines.
+	if _, err := db.ExecContext(ctx, `
+		CREATE FUNCTION reject_checkpoint() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.current_line = 3 THEN
+				RAISE EXCEPTION 'test checkpoint failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER reject_checkpoint BEFORE UPDATE ON file_management
+			FOR EACH ROW EXECUTE FUNCTION reject_checkpoint();`); err != nil {
+		t.Fatal(err)
 	}
 
-	processed, err := orchestrate.PollOnce(ctx, agentClient, progress, nil, deps)
-	if err != nil {
-		t.Fatalf("PollOnce failed: %v", err)
+	release()
+	first := startReader(t, exe, settings)
+	checkStatus(t, first.address, "", http.StatusUnauthorized)
+	checkStatus(t, first.address, "wrong", http.StatusUnauthorized)
+	eventually(t, func() bool { return first.deliveryExhausted.Load() })
+	status := checkStatus(t, first.address, "test-status-key", http.StatusOK)
+	if len(status) != 1 || status[0] != (fileStatus{fileID, "reading", 0, 0}) {
+		t.Fatalf("failed delivery advanced the checkpoint: %v", status)
 	}
-	if !processed {
-		t.Fatal("expected PollOnce to process the file")
+	declareQueues()
+	eventually(t, func() bool {
+		result := checkStatus(t, first.address, "test-status-key", http.StatusOK)
+		queue, err := amqpChannel.QueueInspect(fullRecordQueue)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(result) == 1 && result[0] == (fileStatus{fileID, "reading", 2, 1}) && queue.Messages >= 2
+	})
+	progress := storage.NewProgressStore(db)
+	saved, _, err := progress.Load(ctx, fileID)
+	if err != nil || saved.SelectedRegexID == nil || saved.Priority != 5 {
+		t.Fatalf("checkpoint: %+v, %v", saved, err)
+	}
+	if entries, err := os.ReadDir(workDir); err != nil || len(entries) != 1 {
+		t.Fatalf("retained working copy: %v, %v", entries, err)
+	}
+	first.stop(t)
+	if _, err := db.ExecContext(ctx, "DROP TRIGGER reject_checkpoint ON file_management"); err != nil {
+		t.Fatal(err)
 	}
 
-	state, ok, err := progress.Load(ctx, "e2e-test-file.txt")
-	if err != nil || !ok {
-		t.Fatalf("expected a saved FileState, ok=%v err=%v", ok, err)
+	second := startReader(t, exe, settings)
+	eventually(t, func() bool {
+		result := checkStatus(t, second.address, "test-status-key", http.StatusOK)
+		return len(result) == 1 && result[0] == (fileStatus{fileID, "done", 3, 2})
+	})
+	final, _, err := progress.Load(ctx, fileID)
+	if err != nil || final.SelectedRegexID == nil || *final.SelectedRegexID != *saved.SelectedRegexID || final.Priority != saved.Priority {
+		t.Fatalf("restart changed regex or priority: %+v, %v", final, err)
 	}
-	if state.Status != domain.FileStatusDone || state.MatchedCount != 2 {
-		t.Fatalf("got %+v, want done status with 2 matched records", state)
+	close(allowNoMatch)
+	eventually(t, func() bool {
+		result := checkStatus(t, second.address, "test-status-key", http.StatusOK)
+		entries, err := os.ReadDir(workDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(result) == 2 && result[1] == (fileStatus{noMatchID, "done", 0, 0}) && len(entries) == 0
+	})
+	var modifiedAt time.Time
+	for _, id := range []string{fileID, noMatchID} {
+		object, err := minioClient.StatObject(ctx, bucket, id, minio.StatObjectOptions{})
+		if err != nil {
+			t.Fatalf("source %s: %v", id, err)
+		}
+		if id == fileID {
+			modifiedAt = object.LastModified
+		}
 	}
-
-	// Confirm messages actually landed on the real queues.
-	msg, ok, err := amqpChannel.Get(fullRecordQueue, true)
-	if err != nil || !ok {
-		t.Fatalf("expected a message on %q, ok=%v err=%v", fullRecordQueue, ok, err)
+	assertMessages(t, amqpChannel, fullRecordQueue, uniqueURLQueue, modifiedAt)
+	second.stop(t)
+	if os.Getenv("READER_TEST_COMPOSE") == "1" {
+		t.Run("Compose", func(t *testing.T) { checkCompose(t, settings) })
 	}
-	_ = msg
 }
 
-func runMigrations(dsn string) error {
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
+type endpoints struct {
+	dsn, broker, minio, accessKey, secretKey string
+}
 
-	driver, err := migratepg.WithInstance(db, &migratepg.Config{})
+func integrationEndpoints(t *testing.T, ctx context.Context) endpoints {
+	t.Helper()
+	config := endpoints{
+		dsn:       os.Getenv("READER_WORKFLOW_TEST_DATABASE_DSN"),
+		broker:    os.Getenv("READER_WORKFLOW_TEST_RABBITMQ_URL"),
+		minio:     os.Getenv("READER_WORKFLOW_TEST_MINIO_ENDPOINT"),
+		accessKey: os.Getenv("READER_WORKFLOW_TEST_MINIO_ACCESS_KEY"),
+		secretKey: os.Getenv("READER_WORKFLOW_TEST_MINIO_SECRET_KEY"),
+	}
+	if config != (endpoints{}) {
+		if config.dsn == "" || config.broker == "" || config.minio == "" || config.accessKey == "" || config.secretKey == "" {
+			t.Fatal("set all READER_WORKFLOW_TEST_* variables or use the default Testcontainers setup")
+		}
+		return config
+	}
+
+	config.dsn = integrationinfra.PostgreSQL(t)
+
+	rmq, err := rabbitmq.Run(ctx, "rabbitmq:3.13-management-alpine",
+		rabbitmq.WithAdminUsername("reader-test"), rabbitmq.WithAdminPassword("reader-test-password"))
 	if err != nil {
-		return err
+		t.Fatalf("starting RabbitMQ: %v", err)
 	}
-	m, err := migrate.NewWithDatabaseInstance("file://../../migrations", "postgres", driver)
+	t.Cleanup(func() { _ = rmq.Terminate(context.Background()) })
+	config.broker, err = rmq.AmqpURL(ctx)
 	if err != nil {
-		return err
+		t.Fatal(err)
 	}
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		return err
-	}
-	return nil
+
+	config.minio, config.accessKey, config.secretKey = integrationinfra.MinIO(t)
+	return config
 }

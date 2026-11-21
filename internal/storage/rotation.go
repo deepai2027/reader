@@ -21,15 +21,24 @@ func NewRotationStore(db *sql.DB) *RotationStore {
 
 const tryFileLock = `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 721456003))`
 
+// LockPolling grants one Reader ownership from assignment through processing.
+func (s *RotationStore) LockPolling(ctx context.Context) (func(), error) {
+	return s.tryLock(ctx, `SELECT pg_try_advisory_xact_lock(721456003, 1)`)
+}
+
 // LockProcessing holds the file lock while the pipeline reads and checkpoints
 // the object. Checkpoints use their own connections and commit normally.
 func (s *RotationStore) LockProcessing(ctx context.Context, fileID string) (func(), error) {
+	return s.tryLock(ctx, tryFileLock, fileID)
+}
+
+func (s *RotationStore) tryLock(ctx context.Context, query string, args ...any) (func(), error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	var acquired bool
-	if err := tx.QueryRowContext(ctx, tryFileLock, fileID).Scan(&acquired); err != nil || !acquired {
+	if err := tx.QueryRowContext(ctx, query, args...).Scan(&acquired); err != nil || !acquired {
 		_ = tx.Rollback()
 		return nil, err
 	}

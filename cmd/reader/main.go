@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -19,7 +20,6 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/yourorg/reader/internal/agent"
 	"github.com/yourorg/reader/internal/config"
@@ -32,6 +32,7 @@ import (
 	"github.com/yourorg/reader/internal/rabbitmq"
 	"github.com/yourorg/reader/internal/statusapi"
 	"github.com/yourorg/reader/internal/storage"
+	"github.com/yourorg/reader/migrations"
 )
 
 func main() {
@@ -99,6 +100,9 @@ func runAgentMode(logger *slog.Logger, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("loading infrastructure configuration: %w", err)
 	}
+	if err := migrations.Up(infra.DatabaseDSN); err != nil {
+		return fmt.Errorf("applying database migrations: %w", err)
+	}
 
 	db, err := sql.Open("pgx", infra.DatabaseDSN)
 	if err != nil {
@@ -114,22 +118,17 @@ func runAgentMode(logger *slog.Logger, cfg config.Config) error {
 		return fmt.Errorf("creating MinIO client: %w", err)
 	}
 
-	amqpConn, err := amqp.Dial(infra.RabbitMQURL)
-	if err != nil {
-		return fmt.Errorf("connecting to RabbitMQ: %w", err)
-	}
-	defer amqpConn.Close()
-
-	amqpChannel, err := amqpConn.Channel()
-	if err != nil {
-		return fmt.Errorf("opening RabbitMQ channel: %w", err)
-	}
+	amqpChannel := rabbitmq.NewConfirmingChannel(infra.RabbitMQURL)
 	defer amqpChannel.Close()
 
 	progress := storage.NewProgressStore(db)
 	rotation := storage.NewRotationStore(db)
 	regexes := storage.NewRegexSource(db)
-	files := objectstore.NewFileSource(minioClient, infra.MinIOBucket)
+	workDir := infra.WorkDir
+	if workDir == "" {
+		workDir = filepath.Join(os.TempDir(), "reader-work")
+	}
+	files := objectstore.NewWorkingFileSource(minioClient, infra.MinIOBucket, workDir)
 
 	rawPublisher := rabbitmq.NewPublisher(amqpChannel, rabbitmq.Topics{
 		FullRecord: infra.RabbitMQFullRecordTopic,
@@ -211,7 +210,18 @@ func runAgentMode(logger *slog.Logger, cfg config.Config) error {
 			if ctx.Err() != nil {
 				continue
 			}
-			processed, err := orchestrate.PollOnce(ctx, agentClient, progress, logger, deps)
+			processed, err := func() (bool, error) {
+				release, err := rotation.LockPolling(ctx)
+				if err != nil {
+					return false, err
+				}
+				if release == nil {
+					logger.Debug("another Reader owns polling")
+					return false, nil
+				}
+				defer release()
+				return orchestrate.PollOnce(ctx, agentClient, progress, logger, deps)
+			}()
 			if err != nil {
 				logger.Error("poll cycle failed", "error", err)
 				continue

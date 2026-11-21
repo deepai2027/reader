@@ -38,12 +38,12 @@ func testDeps(progress *stub.ProgressStore) pipeline.Deps {
 	}
 }
 
-func TestPollOnce_SkipsWhenAlreadyReading(t *testing.T) {
+func TestPollOnce_ResumesBeforePollingAgent(t *testing.T) {
 	progress := stub.NewProgressStore()
 	ctx := context.Background()
 	now := time.Now().UTC()
 	if err := progress.Save(ctx, domain.FileState{
-		FileID: "already-in-progress", Status: domain.FileStatusReading,
+		FileID: "../processing/testdata/well_formed.txt", Status: domain.FileStatusReading,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("setup: %v", err)
@@ -61,8 +61,8 @@ func TestPollOnce_SkipsWhenAlreadyReading(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if processed {
-		t.Error("expected PollOnce to do nothing while a file is already reading")
+	if !processed {
+		t.Error("expected PollOnce to continue the saved assignment")
 	}
 	if called {
 		t.Error("expected the Agent not to be polled at all while a file is already reading")

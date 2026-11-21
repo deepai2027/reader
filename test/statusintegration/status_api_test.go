@@ -14,29 +14,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/yourorg/reader/internal/domain"
 	"github.com/yourorg/reader/internal/statusapi"
 	"github.com/yourorg/reader/internal/storage"
+	"github.com/yourorg/reader/migrations"
+	"github.com/yourorg/reader/test/integrationinfra"
 )
 
 func TestStatusAPI_PostgreSQL(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
 	dsn := os.Getenv("READER_STATUS_TEST_DATABASE_DSN")
 	if dsn == "" {
-		t.Skip("set READER_STATUS_TEST_DATABASE_DSN to a dedicated empty test database")
+		dsn = integrationinfra.PostgreSQL(t)
 	}
-	migrations, err := migrate.New("file://../../migrations", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer migrations.Close()
-	if err := migrations.Up(); err != nil && err != migrate.ErrNoChange {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := migrations.Up(dsn); err != nil {
 		t.Fatal(err)
 	}
 	db, err := sql.Open("pgx", dsn)

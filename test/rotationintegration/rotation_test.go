@@ -13,9 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -24,6 +21,8 @@ import (
 	"github.com/yourorg/reader/internal/logrotation"
 	"github.com/yourorg/reader/internal/objectstore"
 	"github.com/yourorg/reader/internal/storage"
+	"github.com/yourorg/reader/migrations"
+	"github.com/yourorg/reader/test/integrationinfra"
 )
 
 func TestPostgreSQLRetention(t *testing.T) {
@@ -122,20 +121,28 @@ func TestPostgreSQLRetention(t *testing.T) {
 
 func TestMinIORetention(t *testing.T) {
 	endpoint := os.Getenv("READER_ROTATION_TEST_MINIO_ENDPOINT")
+	accessKey := os.Getenv("READER_ROTATION_TEST_MINIO_ACCESS_KEY")
+	secretKey := os.Getenv("READER_ROTATION_TEST_MINIO_SECRET_KEY")
+	bucket := os.Getenv("READER_ROTATION_TEST_MINIO_BUCKET")
 	if endpoint == "" {
-		t.Skip("set READER_ROTATION_TEST_MINIO_ENDPOINT for the real MinIO integration checks")
+		endpoint, accessKey, secretKey = integrationinfra.MinIO(t)
+		bucket = "reader-rotation"
 	}
 	ctx, db := testDatabase(t)
 	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(os.Getenv("READER_ROTATION_TEST_MINIO_ACCESS_KEY"), os.Getenv("READER_ROTATION_TEST_MINIO_SECRET_KEY"), ""),
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure: os.Getenv("READER_ROTATION_TEST_MINIO_USE_SSL") == "true",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bucket := os.Getenv("READER_ROTATION_TEST_MINIO_BUCKET")
 	if bucket == "" {
 		t.Fatal("set READER_ROTATION_TEST_MINIO_BUCKET to a dedicated empty test bucket")
+	}
+	if os.Getenv("READER_ROTATION_TEST_MINIO_ENDPOINT") == "" {
+		if err := client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	remove := objectstore.ObjectRemover(client, bucket)
 	put := func(id string) {
@@ -245,19 +252,13 @@ func testDatabase(t *testing.T) (context.Context, *sql.DB) {
 	t.Helper()
 	dsn := os.Getenv("READER_ROTATION_TEST_DATABASE_DSN")
 	if dsn == "" {
-		t.Skip("set READER_ROTATION_TEST_DATABASE_DSN to a dedicated empty test database")
+		dsn = integrationinfra.PostgreSQL(t)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	t.Cleanup(cancel)
-	migrations, err := migrate.New("file://../../migrations", dsn)
-	if err != nil {
+	if err := migrations.Up(dsn); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrations.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		_, _ = migrations.Close()
-		t.Fatal(err)
-	}
-	_, _ = migrations.Close()
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {

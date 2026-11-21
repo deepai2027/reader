@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
@@ -52,14 +53,17 @@ func NewPublisher(channel Channel, topics Topics) *Publisher {
 }
 
 func (p *Publisher) PublishRecord(ctx context.Context, r domain.ValidatedRecord) error {
-	return p.publish(ctx, p.topics.FullRecord, r)
+	return p.publish(ctx, p.topics.FullRecord, 0, r)
 }
 
 func (p *Publisher) PublishUniqueURL(ctx context.Context, m domain.UniqueURLMessage) error {
-	return p.publish(ctx, p.topics.UniqueURL, m)
+	if m.Priority < 0 || m.Priority > 255 {
+		return fmt.Errorf("rabbitmq: priority %d outside AMQP range: %w", m.Priority, ports.ErrPermanent)
+	}
+	return p.publish(ctx, p.topics.UniqueURL, uint8(m.Priority), m)
 }
 
-func (p *Publisher) publish(ctx context.Context, routingKey string, payload any) error {
+func (p *Publisher) publish(ctx context.Context, routingKey string, priority uint8, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		// A marshal failure on our own well-typed structs indicates a
@@ -67,10 +71,11 @@ func (p *Publisher) publish(ctx context.Context, routingKey string, payload any)
 		return fmt.Errorf("rabbitmq: marshaling message: %w: %w", ports.ErrPermanent, err)
 	}
 
-	err = p.channel.PublishWithContext(ctx, "", routingKey, false, false, amqp.Publishing{
+	err = p.channel.PublishWithContext(ctx, "", routingKey, true, false, amqp.Publishing{
 		ContentType:  "application/json",
 		Body:         body,
 		DeliveryMode: amqp.Persistent,
+		Priority:     priority,
 	})
 	if err != nil {
 		// Any broker/connection-level error is treated as transient -
@@ -78,6 +83,84 @@ func (p *Publisher) publish(ctx context.Context, routingKey string, payload any)
 		// retries per config.RetryMaxAttempts before surfacing a hard
 		// failure.
 		return fmt.Errorf("rabbitmq: publishing to %q: %w: %w", routingKey, ports.ErrTransient, err)
+	}
+	return nil
+}
+
+// ConfirmingChannel owns the connection used by a synchronous publisher. A
+// retry after a transport failure establishes a fresh connection.
+type ConfirmingChannel struct {
+	url     string
+	conn    *amqp.Connection
+	channel *amqp.Channel
+	returns <-chan amqp.Return
+}
+
+func NewConfirmingChannel(url string) *ConfirmingChannel {
+	return &ConfirmingChannel{url: url}
+}
+
+func (c *ConfirmingChannel) Close() {
+	if c.conn != nil {
+		_ = c.conn.CloseDeadline(time.Now().Add(time.Second))
+		c.conn, c.channel = nil, nil
+	}
+}
+
+func (c *ConfirmingChannel) connect() error {
+	if c.channel != nil && !c.channel.IsClosed() && !c.conn.IsClosed() {
+		return nil
+	}
+	c.Close()
+	conn, err := amqp.Dial(c.url)
+	if err != nil {
+		return err
+	}
+	c.conn = conn
+	channel, err := conn.Channel()
+	if err != nil {
+		c.Close()
+		return err
+	}
+	if err := channel.Confirm(false); err != nil {
+		c.Close()
+		return err
+	}
+	c.channel = channel
+	c.returns = channel.NotifyReturn(make(chan amqp.Return, 1))
+	return nil
+}
+
+func (c *ConfirmingChannel) PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := c.connect(); err != nil {
+		return err
+	}
+	confirmation, err := c.channel.PublishWithDeferredConfirm(exchange, key, mandatory, immediate, msg)
+	if err != nil {
+		c.Close()
+		return err
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	acked, err := confirmation.WaitContext(waitCtx)
+	if err != nil || !acked {
+		c.Close()
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("broker did not confirm delivery")
+	}
+	// RabbitMQ sends basic.return before the confirmation for an unroutable
+	// mandatory message. This channel has only one outstanding publish.
+	select {
+	case returned, open := <-c.returns:
+		if open {
+			return fmt.Errorf("broker returned message: %s", returned.ReplyText)
+		}
+	default:
 	}
 	return nil
 }

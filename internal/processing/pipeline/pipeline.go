@@ -69,17 +69,28 @@ func Run(ctx context.Context, fileID, fileRef string, priority int, deps Deps) (
 	}
 	defer stream.Close()
 
+	var modifiedAt time.Time
+	if file, ok := stream.(*os.File); ok {
+		info, err := file.Stat()
+		if err != nil {
+			return Stats{}, fmt.Errorf("pipeline: reading metadata for %q: %w", fileID, err)
+		}
+		modifiedAt = info.ModTime().UTC()
+	}
 	if found && existing.Status == domain.FileStatusReading {
+		if existing.SelectedRegexID == nil && existing.CurrentLine == 0 && existing.MatchedCount == 0 {
+			return startFresh(ctx, fileID, existing.Priority, stream, existing.CreatedAt, modifiedAt, deps)
+		}
 		if deps.Logger != nil {
 			deps.Logger.Info("resuming in-progress file",
 				"file_id", fileID, "current_line", existing.CurrentLine)
 		}
-		return resume(ctx, fileID, existing, batch.New(stream, deps.Config.BatchSize), deps)
+		return resume(ctx, fileID, existing, batch.New(stream, deps.Config.BatchSize), modifiedAt, deps)
 	}
-	return startFresh(ctx, fileID, priority, stream, deps)
+	return startFresh(ctx, fileID, priority, stream, time.Now().UTC(), modifiedAt, deps)
 }
 
-func startFresh(ctx context.Context, fileID string, priority int, stream io.Reader, deps Deps) (Stats, error) {
+func startFresh(ctx context.Context, fileID string, priority int, stream io.Reader, createdAt, modifiedAt time.Time, deps Deps) (Stats, error) {
 	patterns, err := deps.Regexes.ActivePatterns(ctx)
 	if err != nil {
 		return Stats{}, fmt.Errorf("pipeline: loading active patterns: %w", err)
@@ -135,7 +146,7 @@ func startFresh(ctx context.Context, fileID string, priority int, stream io.Read
 		state := domain.FileState{
 			FileID: fileID, Status: domain.FileStatusDone,
 			CurrentLine: 0, MatchedCount: 0, Priority: priority,
-			CreatedAt: now, UpdatedAt: now,
+			CreatedAt: createdAt, UpdatedAt: now,
 		}
 		if err := deps.Progress.Save(ctx, state); err != nil {
 			return Stats{}, fmt.Errorf("pipeline: saving no-match file state: %w", err)
@@ -161,7 +172,7 @@ func startFresh(ctx context.Context, fileID string, priority int, stream io.Read
 		FileID: fileID, Status: domain.FileStatusReading,
 		CurrentLine: 0, MatchedCount: 0,
 		SelectedRegexID: &selectedID, Priority: priority,
-		CreatedAt: now, UpdatedAt: now,
+		CreatedAt: createdAt, UpdatedAt: now,
 	}
 	if err := deps.Progress.Save(ctx, initial); err != nil {
 		return Stats{}, fmt.Errorf("pipeline: saving initial file state: %w", err)
@@ -170,7 +181,7 @@ func startFresh(ctx context.Context, fileID string, priority int, stream io.Read
 	rs := &runState{
 		fileID: fileID, priority: priority, selectedID: selectedID,
 		compiled: compiled, dedup: uniqueurl.New(priority),
-		createdAt: now, deps: deps,
+		createdAt: createdAt, modifiedAt: modifiedAt, deps: deps,
 	}
 
 	selectedPattern := selection.Pattern
@@ -183,7 +194,7 @@ func startFresh(ctx context.Context, fileID string, priority int, stream io.Read
 }
 
 // resume continues a file whose FileState shows Status = reading.
-func resume(ctx context.Context, fileID string, existing domain.FileState, reader *batch.Reader, deps Deps) (Stats, error) {
+func resume(ctx context.Context, fileID string, existing domain.FileState, reader *batch.Reader, modifiedAt time.Time, deps Deps) (Stats, error) {
 	if existing.SelectedRegexID == nil {
 		return Stats{}, fmt.Errorf("pipeline: resume: file %q has status reading but no SelectedRegexID recorded", fileID)
 	}
@@ -210,20 +221,14 @@ func resume(ctx context.Context, fileID string, existing domain.FileState, reade
 		return Stats{}, fmt.Errorf("pipeline: resume: recompiling pattern %d: %w", selected.ID, err)
 	}
 
-	discarded, err := reader.Skip(ctx, existing.CurrentLine)
-	if err != nil {
-		return Stats{}, fmt.Errorf("pipeline: resume: discarding already-processed lines: %w", err)
-	}
-	if discarded < existing.CurrentLine {
-		return Stats{}, fmt.Errorf(
-			"pipeline: resume: file %q has fewer lines (%d) than its recorded current_line (%d); it may have changed since the crash",
-			fileID, discarded, existing.CurrentLine)
-	}
-
 	rs := &runState{
 		fileID: fileID, priority: existing.Priority, selectedID: selected.ID,
 		compiled: compiled, dedup: uniqueurl.New(existing.Priority),
-		createdAt: existing.CreatedAt, deps: deps,
+		createdAt: existing.CreatedAt, modifiedAt: modifiedAt, deps: deps,
+	}
+	if err := rs.restoreURLIndex(ctx, reader, existing.CurrentLine); err != nil {
+		_ = rs.dedup.Close()
+		return Stats{}, err
 	}
 	rs.lastLine = existing.CurrentLine
 	rs.stats.MatchedCount = existing.MatchedCount
@@ -244,6 +249,7 @@ type runState struct {
 	compiled   *regexengine.Pattern
 	dedup      *uniqueurl.Dedup
 	createdAt  time.Time
+	modifiedAt time.Time
 	deps       Deps
 
 	stats    Stats
@@ -300,37 +306,63 @@ func (r *runState) processBatch(ctx context.Context, lines []domain.RawLine) err
 	return nil
 }
 
-func (r *runState) processLine(ctx context.Context, line domain.RawLine) error {
+// restoreURLIndex rebuilds membership from the committed prefix without
+// publishing records or changing counters.
+func (r *runState) restoreURLIndex(ctx context.Context, reader *batch.Reader, committed int64) error {
+	for index := int64(0); index < committed; index++ {
+		text, ok, err := reader.NextLine(ctx)
+		if err != nil {
+			return fmt.Errorf("pipeline: restoring URL index: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("pipeline: resume: file %q has fewer lines (%d) than its recorded current_line (%d)", r.fileID, index, committed)
+		}
+		_, normalized, valid := r.normalizedCandidate(domain.RawLine{LineNumber: index + 1, Text: text})
+		if valid {
+			if _, _, err := r.dedup.Offer(normalized.URL, normalized.Domain, normalized.Subdomain, normalized.Suffix); err != nil {
+				return fmt.Errorf("pipeline: restoring URL index: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *runState) normalizedCandidate(line domain.RawLine) (domain.ExtractedCandidate, normalize.Normalized, bool) {
 	candidate, ok := extract.Candidate(r.compiled, line)
 	if !ok {
-		r.stats.InvalidCount++
-		return nil
+		return candidate, normalize.Normalized{}, false
 	}
 
 	result := validate.Candidate(r.deps.Config, candidate)
 	if !result.Valid {
-		r.stats.InvalidCount++
 		if r.deps.Logger != nil {
 			r.deps.Logger.Debug("line failed validation",
 				"file_id", r.fileID, "line", line.LineNumber, "reason", result.Reason)
 		}
-		return nil
+		return candidate, normalize.Normalized{}, false
 	}
 
 	normalized, err := normalize.URL(candidate.URL)
 	if err != nil {
-		r.stats.InvalidCount++
 		if r.deps.Logger != nil {
 			r.deps.Logger.Debug("line failed normalization",
 				"file_id", r.fileID, "line", line.LineNumber, "error", err)
 		}
+		return candidate, normalize.Normalized{}, false
+	}
+	return candidate, normalized, true
+}
+
+func (r *runState) processLine(ctx context.Context, line domain.RawLine) error {
+	candidate, normalized, valid := r.normalizedCandidate(line)
+	if !valid {
+		r.stats.InvalidCount++
 		return nil
 	}
-
 	rec := record.Assemble(
 		candidate.Username, candidate.Password, normalized.URL,
 		normalized.Domain, normalized.Subdomain, normalized.Suffix, normalized.Port,
-		r.createdAt, r.createdAt,
+		r.fileModifiedAt(), r.createdAt,
 	)
 	if err := r.deps.Publisher.PublishRecord(ctx, rec); err != nil {
 		return fmt.Errorf("publishing record for line %d: %w", line.LineNumber, err)
@@ -348,6 +380,13 @@ func (r *runState) processLine(ctx context.Context, line domain.RawLine) error {
 		r.stats.UniqueURLCount++
 	}
 	return nil
+}
+
+func (r *runState) fileModifiedAt() time.Time {
+	if r.modifiedAt.IsZero() {
+		return r.createdAt
+	}
+	return r.modifiedAt
 }
 
 // checkpoint persists current cumulative progress. status stays

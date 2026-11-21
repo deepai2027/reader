@@ -120,6 +120,7 @@ func isValidLogLevel(level string) bool {
 
 type InfraConfig struct {
 	DatabaseDSN string
+	WorkDir     string
 
 	MinIOEndpoint  string
 	MinIOAccessKey string
@@ -153,6 +154,7 @@ func loadInfra(lookup envLookup) (InfraConfig, error) {
 
 	cfg := InfraConfig{
 		DatabaseDSN: mustString(lookup, "DATABASE_DSN", &errs),
+		WorkDir:     stringOrDefault(lookup, "READER_WORK_DIR", ""),
 
 		MinIOEndpoint:  mustString(lookup, "MINIO_ENDPOINT", &errs),
 		MinIOAccessKey: mustString(lookup, "MINIO_ACCESS_KEY", &errs),
