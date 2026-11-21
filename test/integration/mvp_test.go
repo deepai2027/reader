@@ -20,6 +20,8 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/testcontainers/testcontainers-go/modules/rabbitmq"
 
+	"github.com/yourorg/reader/internal/domain"
+	readerRabbitMQ "github.com/yourorg/reader/internal/rabbitmq"
 	"github.com/yourorg/reader/internal/storage"
 	"github.com/yourorg/reader/test/integrationinfra"
 )
@@ -48,6 +50,27 @@ func TestMVP_EndToEnd_HappyPathAndCrashResume(t *testing.T) {
 	defer amqpChannel.Close()
 	t.Run("delivery retry and confirmation", func(t *testing.T) {
 		checkBrokerDelivery(t, ctx, rmqURL, amqpChannel)
+	})
+	t.Run("provisions missing output queues", func(t *testing.T) {
+		topics := readerRabbitMQ.Topics{FullRecord: "test.provision.full_record", UniqueURL: "test.provision.unique_url"}
+		stream := readerRabbitMQ.NewProvisioningChannel(rmqURL, topics, 10)
+		defer stream.Close()
+		publisher := readerRabbitMQ.NewPublisher(stream, topics)
+		if err := publisher.PublishRecord(ctx, domain.ValidatedRecord{RecordHash: "provisioned"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := publisher.PublishUniqueURL(ctx, domain.UniqueURLMessage{URL: "https://example.com", Priority: 5}); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{topics.FullRecord, topics.UniqueURL} {
+			message, found, err := amqpChannel.Get(name, true)
+			if err != nil || !found {
+				t.Fatalf("expected a confirmed message in %q: %v", name, err)
+			}
+			if name == topics.UniqueURL && message.Priority != 5 {
+				t.Fatalf("unique URL priority = %d, want 5", message.Priority)
+			}
+		}
 	})
 
 	const fullRecordQueue = "test.full_record"

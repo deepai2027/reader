@@ -8,6 +8,7 @@ package rabbitmq
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -90,14 +91,46 @@ func (p *Publisher) publish(ctx context.Context, routingKey string, priority uin
 // ConfirmingChannel owns the connection used by a synchronous publisher. A
 // retry after a transport failure establishes a fresh connection.
 type ConfirmingChannel struct {
-	url     string
-	conn    *amqp.Connection
-	channel *amqp.Channel
-	returns <-chan amqp.Return
+	url         string
+	topics      Topics
+	maxPriority int
+	conn        *amqp.Connection
+	channel     *amqp.Channel
+	returns     <-chan amqp.Return
 }
 
 func NewConfirmingChannel(url string) *ConfirmingChannel {
 	return &ConfirmingChannel{url: url}
+}
+
+// NewProvisioningChannel ensures the configured queues exist on each connection.
+func NewProvisioningChannel(url string, topics Topics, maxPriority int) *ConfirmingChannel {
+	return &ConfirmingChannel{url: url, topics: topics, maxPriority: maxPriority}
+}
+
+func ensureQueue(conn *amqp.Connection, name string, args amqp.Table) error {
+	channel, err := conn.Channel()
+	if err != nil {
+		return err
+	}
+	_, err = channel.QueueDeclarePassive(name, false, false, false, false, nil)
+	_ = channel.Close()
+	if err == nil {
+		return nil
+	}
+	var brokerErr *amqp.Error
+	if !errors.As(err, &brokerErr) || brokerErr.Code != amqp.NotFound {
+		return err
+	}
+
+	// A missing queue closes the channel that performed the passive check.
+	channel, err = conn.Channel()
+	if err != nil {
+		return err
+	}
+	defer channel.Close()
+	_, err = channel.QueueDeclare(name, true, false, false, false, args)
+	return err
 }
 
 func (c *ConfirmingChannel) Close() {
@@ -117,6 +150,19 @@ func (c *ConfirmingChannel) connect() error {
 		return err
 	}
 	c.conn = conn
+	if c.topics.UniqueURL != "" {
+		args := amqp.Table{"x-queue-type": "classic", "x-max-priority": int32(c.maxPriority)}
+		if err := ensureQueue(conn, c.topics.UniqueURL, args); err != nil {
+			c.Close()
+			return fmt.Errorf("ensuring queue %q: %w", c.topics.UniqueURL, err)
+		}
+	}
+	if c.topics.FullRecord != "" && c.topics.FullRecord != c.topics.UniqueURL {
+		if err := ensureQueue(conn, c.topics.FullRecord, nil); err != nil {
+			c.Close()
+			return fmt.Errorf("ensuring queue %q: %w", c.topics.FullRecord, err)
+		}
+	}
 	channel, err := conn.Channel()
 	if err != nil {
 		c.Close()
@@ -158,6 +204,9 @@ func (c *ConfirmingChannel) PublishWithContext(ctx context.Context, exchange, ke
 	select {
 	case returned, open := <-c.returns:
 		if open {
+			if returned.ReplyCode == amqp.NoRoute && c.topics != (Topics{}) {
+				c.Close()
+			}
 			return fmt.Errorf("broker returned message: %s", returned.ReplyText)
 		}
 	default:

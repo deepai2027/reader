@@ -118,7 +118,11 @@ func runAgentMode(logger *slog.Logger, cfg config.Config) error {
 		return fmt.Errorf("creating MinIO client: %w", err)
 	}
 
-	amqpChannel := rabbitmq.NewConfirmingChannel(infra.RabbitMQURL)
+	topics := rabbitmq.Topics{
+		FullRecord: infra.RabbitMQFullRecordTopic,
+		UniqueURL:  infra.RabbitMQUniqueURLTopic,
+	}
+	amqpChannel := rabbitmq.NewProvisioningChannel(infra.RabbitMQURL, topics, infra.RabbitMQMaxPriority)
 	defer amqpChannel.Close()
 
 	progress := storage.NewProgressStore(db)
@@ -130,10 +134,7 @@ func runAgentMode(logger *slog.Logger, cfg config.Config) error {
 	}
 	files := objectstore.NewWorkingFileSource(minioClient, infra.MinIOBucket, workDir)
 
-	rawPublisher := rabbitmq.NewPublisher(amqpChannel, rabbitmq.Topics{
-		FullRecord: infra.RabbitMQFullRecordTopic,
-		UniqueURL:  infra.RabbitMQUniqueURLTopic,
-	})
+	rawPublisher := rabbitmq.NewPublisher(amqpChannel, topics)
 	publisher := local.New(rawPublisher, cfg.RetryMaxAttempts, cfg.RetryBaseDelayMS)
 
 	agentClient := agent.New(&http.Client{Timeout: 30 * time.Second}, infra.AgentBaseURL, infra.AgentAPIKey)

@@ -647,7 +647,7 @@ RABBITMQ_FULL_RECORD_TOPIC=
 RABBITMQ_UNIQUE_URL_TOPIC=
 
 # RabbitMQ Priority
-RABBITMQ_MAX_PRIORITY=
+RABBITMQ_MAX_PRIORITY=10
 
 # Batch Processing
 BATCH_SIZE=
@@ -664,7 +664,7 @@ LOG_ROTATION_INTERVAL=24h
 
 Copy `.env.example` to `.env` and set the PostgreSQL DSN, MinIO bucket and credentials, RabbitMQ URL and queue names, Agent URL and key, and a Reader Status API key. The PostgreSQL database must exist. Reader applies its embedded migrations on startup in Agent mode. Give the database account permission to create and update the Reader schema.
 
-Provision the MinIO bucket and both RabbitMQ queues before starting Reader. Use durable queues and set `x-max-priority` on the Unique URL queue to the highest priority the Agent assigns. Agent priorities must fit the AMQP range of 0–255. Reader waits for broker confirmation and treats an unroutable message as a failed delivery.
+Provision the MinIO bucket before starting Reader. When Reader connects to RabbitMQ to publish, it creates any missing output queues as durable queues and uses existing queues as configured on the broker. Give the RabbitMQ account configure permission for the queue names and write permission on the default exchange. Set `RABBITMQ_MAX_PRIORITY` to match the highest priority the Agent assigns (default `10`). Reader uses it as `x-max-priority` when creating a classic Unique URL queue. Agent priorities must fit the AMQP range of 0–255. Reader waits for broker confirmation and treats an unroutable message as a failed delivery.
 
 Run `go run ./cmd/reader -mode=agent` for a host deployment. Use `READER_WORK_DIR` to select a writable directory with space for the largest input and processing scratch files. Keep the volume across restarts to reuse completed downloads. Use a separate working directory for each independent deployment.
 

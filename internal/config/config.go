@@ -131,6 +131,7 @@ type InfraConfig struct {
 	RabbitMQURL             string
 	RabbitMQFullRecordTopic string
 	RabbitMQUniqueURLTopic  string
+	RabbitMQMaxPriority     int
 
 	AgentBaseURL             string
 	AgentAPIKey              string
@@ -177,6 +178,12 @@ func loadInfra(lookup envLookup) (InfraConfig, error) {
 	if cfg.AgentPollIntervalSeconds <= 0 {
 		errs = append(errs, "AGENT_POLL_INTERVAL_SECONDS must be a positive integer")
 	}
+
+	maxPriority, err := strconv.Atoi(stringOrDefault(lookup, "RABBITMQ_MAX_PRIORITY", "10"))
+	if err != nil || maxPriority < 1 || maxPriority > 255 {
+		errs = append(errs, "RABBITMQ_MAX_PRIORITY must be an integer from 1 to 255")
+	}
+	cfg.RabbitMQMaxPriority = maxPriority
 
 	interval, err := time.ParseDuration(stringOrDefault(lookup, "LOG_ROTATION_INTERVAL", "24h"))
 	if err != nil || interval <= 0 {
