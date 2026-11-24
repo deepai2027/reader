@@ -21,6 +21,7 @@ services:
 
   reader:
     build: .
+    entrypoint: ["/reader"]  # debug image defaults to /bin/sh; run the reader binary directly
     command: ["-mode=agent"]
     depends_on:
       postgres:

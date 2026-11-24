@@ -41,8 +41,10 @@ func main() {
 			`"agent": poll the real Agent and process against real infrastructure (requires LoadInfra's env vars).`)
 	filePath := flag.String("file", "", "manual mode only: path to a local file to process")
 	flag.Parse()
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using environment variables")
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+		// A missing .env file is expected (e.g. in containers, where env
+		// vars come from the orchestrator); only warn on other load errors.
+		log.Println("failed to load .env file, using environment variables:", err)
 	}
 	cfg, err := config.Load()
 	if err != nil {
